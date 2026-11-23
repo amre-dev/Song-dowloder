@@ -11,8 +11,8 @@ android {
         applicationId = "com.spiderstudio.songs"
         minSdk = 29
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1-spike"
+        versionCode = 2
+        versionName = "0.2"
     }
 
     // مفتاح debug ثابت (مرفوع بالمستودع) حتى تتحدّث النسخ فوق بعضها بدون حذف
