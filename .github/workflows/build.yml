@@ -1,0 +1,53 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # لو رفعت project.zip بجذر المستودع: يفكّه ويحفظ الملفات كمصدر حقيقي ثم يحذف الـ zip
+      - name: Unpack project.zip (if present)
+        run: |
+          if [ -f project.zip ]; then
+            unzip -o project.zip
+            rm project.zip
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git diff --cached --quiet || git commit -m "Unpack project.zip"
+            git push
+          fi
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Build debug APK
+        run: gradle :app:assembleDebug --no-daemon --stacktrace
+
+      # الـ APK يظهر بصفحة Releases للتحميل المباشر من الموبايل
+      - name: Publish APK to Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk SongsDownloader.apk
+          gh release delete latest --cleanup-tag -y || true
+          gh release create latest SongsDownloader.apk \
+            --title "Latest build" \
+            --notes "Build #${{ github.run_number }} (${{ github.sha }})" \
+            --prerelease
+            
