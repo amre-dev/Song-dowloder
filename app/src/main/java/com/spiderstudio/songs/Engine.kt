@@ -2,6 +2,9 @@ package com.spiderstudio.songs
 
 import android.content.ContentValues
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.MediaStore
 import org.schabi.newpipe.extractor.MediaFormat
@@ -15,6 +18,7 @@ import org.schabi.newpipe.extractor.playlist.PlaylistInfo
 import org.schabi.newpipe.extractor.stream.AudioStream
 import org.schabi.newpipe.extractor.stream.DeliveryMethod
 import org.schabi.newpipe.extractor.stream.StreamInfo
+import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.OutputStream
 
@@ -30,7 +34,8 @@ object Engine {
     class Canceled : Exception("ملغي")
 
     class Item(val url: String, val title: String?)
-    class Result(val title: String, val bytes: Long, val uri: Uri, val kbps: Int)
+    class Result(val title: String, val bytes: Long, val uri: Uri, val kbps: Int, val note: String)
+    private class Saved(val bytes: Long, val uri: Uri, val injected: Boolean, val playable: Boolean, val cover: Boolean)
 
     fun findUrl(text: String?): String? = text?.let { URL_RE.find(it)?.value }
 
@@ -81,11 +86,45 @@ object Engine {
         val stream = pickAudio(info.audioStreams, quality)
             ?: throw IllegalStateException("ما لقيت ستريم صوت m4a لهذا الرابط (${info.audioStreams.size} ستريم صوت متاح)")
 
+        val artist = (info.uploaderName ?: "").removeSuffix(" - Topic")
+        val tags: ByteArray? = if (Store.tags(context)) {
+            val cover = try { fetchCover(videoId(url)) } catch (e: Exception) { null }
+            Mp4Tags.build(info.name, artist, cover)
+        } else null
+
+        var saved = save(context, info.name, artist, stream, tags, onProgress, isCanceled)
+        var note = ""
+        if (tags != null) {
+            note = when {
+                saved.injected && saved.playable ->
+                    if (saved.cover) "🖼 غلاف + وسوم" else "🏷 وسوم (بدون غلاف)"
+                saved.injected -> {
+                    // الملف الموسوم ما انفتح بشكل سليم: نحذفه وننزّله نظيف بدون وسوم
+                    context.contentResolver.delete(saved.uri, null, null)
+                    onProgress(0)
+                    saved = save(context, info.name, artist, stream, null, onProgress, isCanceled)
+                    "⚠ بدون وسوم (فشل التحقق من الملف الموسوم)"
+                }
+                else -> "⚠ بدون وسوم (بنية الملف غير مدعومة)"
+            }
+        }
+        return Result(info.name, saved.bytes, saved.uri, stream.averageBitrate, note)
+    }
+
+    private fun save(
+        context: Context,
+        title: String,
+        artist: String,
+        stream: AudioStream,
+        tags: ByteArray?,
+        onProgress: (Int) -> Unit,
+        isCanceled: () -> Boolean,
+    ): Saved {
         val resolver = context.contentResolver
         val values = ContentValues().apply {
-            put(MediaStore.Audio.Media.DISPLAY_NAME, safeName(info.name) + ".m4a")
-            put(MediaStore.Audio.Media.TITLE, info.name)
-            put(MediaStore.Audio.Media.ARTIST, (info.uploaderName ?: "").removeSuffix(" - Topic"))
+            put(MediaStore.Audio.Media.DISPLAY_NAME, safeName(title) + ".m4a")
+            put(MediaStore.Audio.Media.TITLE, title)
+            put(MediaStore.Audio.Media.ARTIST, artist)
             put(MediaStore.Audio.Media.MIME_TYPE, "audio/mp4")
             put(MediaStore.Audio.Media.RELATIVE_PATH, "Music/SongsDownloader")
             put(MediaStore.Audio.Media.IS_PENDING, 1)
@@ -94,17 +133,79 @@ object Engine {
             ?: throw IOException("فشل إنشاء الملف بالتخزين")
 
         try {
-            val bytes = resolver.openOutputStream(uri)?.use { out ->
-                fetch(stream.content, out, onProgress, isCanceled)
+            var injected = false
+            val bytes = resolver.openOutputStream(uri)?.use { raw ->
+                val tagger = Mp4Tagger(raw, tags)
+                val n = fetch(stream.content, tagger, onProgress, isCanceled)
+                tagger.finish()
+                injected = tagger.injected
+                n
             } ?: throw IOException("فشل فتح الملف للكتابة")
 
             val done = ContentValues().apply { put(MediaStore.Audio.Media.IS_PENDING, 0) }
             resolver.update(uri, done, null, null)
-            return Result(info.name, bytes, uri, stream.averageBitrate)
+
+            var playable = true
+            var cover = false
+            if (injected) {
+                val r = inspect(context, uri)
+                playable = r.first
+                cover = r.second
+            }
+            return Saved(bytes, uri, injected, playable, cover)
         } catch (e: Throwable) {
             resolver.delete(uri, null, null)   // لا نترك ملف ناقص
             throw e
         }
+    }
+
+    /** يتأكد إنو أندرويد بيقرأ الملف (مدة > 0) ويرجّع (سليم؟، فيه غلاف؟). */
+    private fun inspect(context: Context, uri: Uri): Pair<Boolean, Boolean> {
+        val r = MediaMetadataRetriever()
+        return try {
+            r.setDataSource(context, uri)
+            val dur = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+            Pair(dur > 0L, r.embeddedPicture != null)
+        } catch (e: Exception) {
+            Pair(false, false)
+        } finally {
+            r.release()
+        }
+    }
+
+    /** غلاف مربّع من صور يوتيوب الرسمية (من الأكبر للأصغر). */
+    private fun fetchCover(id: String): ByteArray? {
+        if (id.length != 11) return null
+        for (name in listOf("maxresdefault", "hq720", "sddefault", "hqdefault")) {
+            try {
+                val req = okhttp3.Request.Builder()
+                    .url("https://i.ytimg.com/vi/$id/$name.jpg")
+                    .header("User-Agent", AppDownloader.USER_AGENT)
+                    .build()
+                val bytes = AppDownloader.instance.client.newCall(req).execute().use { resp ->
+                    if (resp.isSuccessful) resp.body?.bytes() else null
+                }
+                if (bytes != null) squareJpeg(bytes)?.let { return it }
+            } catch (e: Exception) {
+                // نجرّب الحجم الأصغر
+            }
+        }
+        return null
+    }
+
+    private fun squareJpeg(bytes: ByteArray): ByteArray? {
+        val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
+        val w = bmp.width
+        val h = bmp.height
+        if (w < 300 || h < 200) return null            // صورة بديلة صغيرة
+        val ratio = w.toFloat() / h
+        // صور 4:3 فيها أشرطة سوداء فوق وتحت: نقص من محتوى 16:9 الحقيقي
+        val side = if (Math.abs(ratio - 4f / 3f) < 0.05f) h * 3 / 4 else minOf(w, h)
+        var sq = Bitmap.createBitmap(bmp, (w - side) / 2, (h - side) / 2, side, side)
+        if (side > 600) sq = Bitmap.createScaledBitmap(sq, 600, 600, true)
+        val out = ByteArrayOutputStream()
+        sq.compress(Bitmap.CompressFormat.JPEG, 90, out)
+        return out.toByteArray()
     }
 
     private fun pickAudio(list: List<AudioStream>, quality: String): AudioStream? {

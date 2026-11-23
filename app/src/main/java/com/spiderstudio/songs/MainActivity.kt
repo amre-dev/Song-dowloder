@@ -70,6 +70,11 @@ class MainActivity : Activity() {
             isChecked = Store.skipDupes(context)
             setOnCheckedChangeListener { _, v -> Store.setSkipDupes(context, v) }
         }
+        val tagsBox = CheckBox(this).apply {
+            text = "غلاف ووسوم داخل الملف"
+            isChecked = Store.tags(context)
+            setOnCheckedChangeListener { _, v -> Store.setTags(context, v) }
+        }
         val clearBtn = Button(this).apply {
             text = "🧹 مسح المنتهي"
             setOnClickListener { Queue.clearFinished() }
@@ -87,6 +92,7 @@ class MainActivity : Activity() {
         root.addView(addBtn, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         root.addView(settingsRow, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         root.addView(skipBox, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        root.addView(tagsBox, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         root.addView(clearBtn, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         root.addView(status, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         root.addView(ScrollView(this).apply { addView(list) }, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
@@ -200,7 +206,8 @@ class MainActivity : Activity() {
                 Queue.S.CANCELED -> "⛔"
                 Queue.S.SKIPPED -> "⏭"
             }
-            title.text = "$icon ${t.title}" + (t.error?.let { "\n$it" } ?: "")
+            title.text = "$icon ${t.title}" + (t.error?.let { "\n$it" } ?: "") +
+                (if (t.note.isNotEmpty()) "\n${t.note}" else "")
             bar.progress = t.progress
             val busy = t.state == Queue.S.WAITING || t.state == Queue.S.RUNNING
             bar.visibility = if (busy) View.VISIBLE else View.GONE

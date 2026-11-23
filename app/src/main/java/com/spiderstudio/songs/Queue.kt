@@ -20,6 +20,7 @@ object Queue {
         var state = S.WAITING
         var progress = 0
         var error: String? = null
+        var note = ""
         @Volatile var gen = 0
     }
 
@@ -87,6 +88,7 @@ object Queue {
             t.state = S.WAITING
             t.progress = 0
             t.error = null
+            t.note = ""
             startService(app)
             submit(p, app, t)
             changed()
@@ -122,14 +124,14 @@ object Queue {
         var attempt = 0
         while (true) {
             try {
-                Engine.download(
+                val r = Engine.download(
                     app, t.url, t.quality,
                     onTitle = { n -> post(t, g) { title = n } },
                     onProgress = { p -> post(t, g) { progress = p } },
                     isCanceled = { t.gen != g },
                 )
                 Store.markDone(app, Engine.videoId(t.url))
-                post(t, g) { state = S.DONE; progress = 100 }
+                post(t, g) { state = S.DONE; progress = 100; note = r.note }
                 return
             } catch (e: Engine.Canceled) {
                 return

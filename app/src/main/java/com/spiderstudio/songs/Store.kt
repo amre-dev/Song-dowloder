@@ -15,6 +15,9 @@ object Store {
     fun skipDupes(c: Context): Boolean = p(c).getBoolean("skip", true)
     fun setSkipDupes(c: Context, v: Boolean) = p(c).edit().putBoolean("skip", v).apply()
 
+    fun tags(c: Context): Boolean = p(c).getBoolean("tags", true)
+    fun setTags(c: Context, v: Boolean) = p(c).edit().putBoolean("tags", v).apply()
+
     fun isDone(c: Context, id: String): Boolean =
         p(c).getStringSet("done", emptySet())?.contains(id) == true
 
