@@ -14,18 +14,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # لو رفعت project.zip بجذر المستودع: يفكّه ويحفظ الملفات كمصدر حقيقي ثم يحذف الـ zip
-      - name: Unpack project.zip (if present)
+      - name: Unpack project zip (if present)
         run: |
-          if [ -f project.zip ]; then
-            unzip -o project.zip
-            rm project.zip
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add -A
-            git diff --cached --quiet || git commit -m "Unpack project.zip"
-            git push
-          fi
+          shopt -s nullglob
+          for z in project*.zip; do
+            unzip -o "$z"
+            rm "$z"
+          done
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet || git commit -m "Unpack project zip"
+          git push
 
       - uses: actions/setup-java@v4
         with:
@@ -39,7 +39,6 @@ jobs:
       - name: Build debug APK
         run: gradle :app:assembleDebug --no-daemon --stacktrace
 
-      # الـ APK يظهر بصفحة Releases للتحميل المباشر من الموبايل
       - name: Publish APK to Releases
         env:
           GH_TOKEN: ${{ github.token }}
@@ -50,4 +49,3 @@ jobs:
             --title "Latest build" \
             --notes "Build #${{ github.run_number }} (${{ github.sha }})" \
             --prerelease
-            
