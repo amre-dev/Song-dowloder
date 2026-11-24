@@ -8,7 +8,8 @@
 
     <application
         android:allowBackup="false"
-        android:label="تنزيل الأغاني"
+        android:icon="@mipmap/ic_launcher"
+        android:label="Amrtune"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.DeviceDefault.DayNight">
 
