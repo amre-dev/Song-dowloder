@@ -22,7 +22,13 @@ class MainActivity : ComponentActivity() {
         Queue.load(this)
         setContent {
             AmrtuneTheme {
-                AppRoot(onAdd = ::addFromInput, onPaste = ::pasteFromClipboard, onOpen = ::openFile)
+                AppRoot(
+                    onAdd = ::addFromInput,
+                    onOptions = ::openOptions,
+                    onPick = ::pickFormat,
+                    onPaste = ::pasteFromClipboard,
+                    onOpen = ::openFile,
+                )
             }
         }
         if (savedInstanceState == null) handleShare(intent)
@@ -60,8 +66,47 @@ class MainActivity : ComponentActivity() {
         if (i?.action == Intent.ACTION_SEND) {
             val url = Engine.findUrl(i.getStringExtra(Intent.EXTRA_TEXT)) ?: return
             UiState.url = url
-            addFromInput()
+            if (Store.shareOptions(this)) openOptions() else addFromInput()
         }
+    }
+
+    private var analyzeSeq = 0
+
+    /** يفتح ورقة الخيارات: يحلّل الرابط ويعرض الصيغ والدقات المتاحة. */
+    private fun openOptions() {
+        val url = Engine.findUrl(UiState.url)
+        if (url == null) {
+            UiState.status = "❌ الصق رابط صالح (يبدأ بـ http)"
+            return
+        }
+        if (Engine.isPlaylist(url)) {
+            UiState.status = "قوائم التشغيل بتنزل صوت حالياً"
+            addFromInput()
+            return
+        }
+        val seq = ++analyzeSeq
+        UiState.analysis = null
+        UiState.sheetError = null
+        UiState.sheetOpen = true
+        Thread {
+            try {
+                val a = Engine.analyze(url)
+                runOnUiThread { if (seq == analyzeSeq && UiState.sheetOpen) UiState.analysis = a }
+            } catch (e: Throwable) {
+                Log.e("Amrtune", "analyze failed", e)
+                runOnUiThread { if (seq == analyzeSeq && UiState.sheetOpen) UiState.sheetError = Engine.explain(e) }
+            }
+        }.start()
+    }
+
+    /** اختيار صيغة من الورقة: يضيف المهمة بالصيغة المطلوبة. */
+    private fun pickFormat(fmt: String) {
+        val a = UiState.analysis ?: return
+        requestNotificationPermissionIfNeeded()
+        Queue.add(this, listOf(Engine.Item(a.url, a.title)), fmt)
+        UiState.sheetOpen = false
+        UiState.url = ""
+        UiState.status = ""
     }
 
     private fun addFromInput() {
@@ -101,7 +146,7 @@ class MainActivity : ComponentActivity() {
         try {
             startActivity(
                 Intent(Intent.ACTION_VIEW)
-                    .setDataAndType(Uri.parse(u), "audio/mp4")
+                    .setDataAndType(Uri.parse(u), if (t.fmt.startsWith("mp4")) "video/mp4" else "audio/mp4")
                     .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             )
         } catch (e: Exception) {

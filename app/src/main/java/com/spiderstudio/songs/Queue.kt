@@ -25,7 +25,7 @@ object Queue {
 
     enum class S { WAITING, RUNNING, DONE, FAILED, CANCELED, SKIPPED }
 
-    class Task(val id: Int, val url: String, title: String, val quality: String, val batch: Int) {
+    class Task(val id: Int, val url: String, title: String, val quality: String, val batch: Int, val fmt: String = "m4a") {
         var title by mutableStateOf(title)
         var state by mutableStateOf(S.WAITING)
         var progress by mutableStateOf(0)
@@ -33,6 +33,9 @@ object Queue {
         var note by mutableStateOf("")
         var size by mutableStateOf(0L)
         var uri by mutableStateOf<String?>(null)
+        var artist by mutableStateOf("")
+        var duration by mutableStateOf(0L)
+        var cover by mutableStateOf<String?>(null)
         @Volatile var gen = 0
     }
 
@@ -79,7 +82,7 @@ object Queue {
                     val o = arr.getJSONObject(i)
                     val t = Task(
                         o.getInt("id"), o.getString("url"), o.optString("title"),
-                        o.optString("quality", "high"), o.optInt("batch", 0)
+                        o.optString("quality", "high"), o.optInt("batch", 0), o.optString("fmt", "m4a")
                     )
                     val saved = S.valueOf(o.optString("state", "DONE"))
                     if (saved == S.WAITING || saved == S.RUNNING) {
@@ -93,6 +96,9 @@ object Queue {
                     t.note = o.optString("note")
                     t.size = o.optLong("size")
                     t.uri = o.optString("uri").ifEmpty { null }
+                    t.artist = o.optString("artist")
+                    t.duration = o.optLong("duration")
+                    t.cover = o.optString("cover").ifEmpty { null }
                     tasks.add(t)
                     if (t.id >= nextId) nextId = t.id + 1
                     if (t.batch >= nextBatch) nextBatch = t.batch + 1
@@ -116,11 +122,15 @@ object Queue {
                     put("title", t.title)
                     put("quality", t.quality)
                     put("batch", t.batch)
+                    put("fmt", t.fmt)
                     put("state", t.state.name)
                     put("error", t.error ?: "")
                     put("note", t.note)
                     put("size", t.size)
                     put("uri", t.uri ?: "")
+                    put("artist", t.artist)
+                    put("duration", t.duration)
+                    put("cover", t.cover ?: "")
                 })
             }
             val f = file(app)
@@ -134,7 +144,7 @@ object Queue {
 
     // ---------- العمليات ----------
 
-    fun add(ctx: Context, items: List<Engine.Item>) {
+    fun add(ctx: Context, items: List<Engine.Item>, fmt: String = "m4a") {
         val app = ctx.applicationContext
         appCtx = app
         val p = pool(app)
@@ -143,8 +153,8 @@ object Queue {
         val batch = nextBatch++
         val fresh = ArrayList<Task>()
         for (it in items) {
-            val t = Task(nextId++, it.url, it.title ?: it.url, quality, batch)
-            if (skip && Store.isDone(app, Engine.videoId(it.url))) {
+            val t = Task(nextId++, it.url, it.title ?: it.url, quality, batch, fmt)
+            if (skip && Store.isDone(app, Engine.archiveKey(it.url, fmt))) {
                 t.state = S.SKIPPED
                 t.error = "نُزّلت سابقاً"
             } else {
@@ -187,14 +197,25 @@ object Queue {
     fun remove(t: Task) {
         if (t.state != S.WAITING && t.state != S.RUNNING) {
             tasks.remove(t)
+            dropCovers(listOf(t))
             changed()
         }
     }
 
     /** مسح المنتهي: المكتمل والملغى والمتخطّى. الفاشل بيضل لتقدر تعيده. */
     fun clearFinished() {
-        tasks.removeAll { it.state == S.DONE || it.state == S.SKIPPED || it.state == S.CANCELED }
+        val gone = tasks.filter { it.state == S.DONE || it.state == S.SKIPPED || it.state == S.CANCELED }
+        tasks.removeAll(gone)
+        dropCovers(gone)
         changed()
+    }
+
+    /** يحذف ملف الغلاف المصغّر إذا ما عاد في مهمة تستخدمه. */
+    private fun dropCovers(removed: List<Task>) {
+        for (r in removed) {
+            val path = r.cover ?: continue
+            if (tasks.none { it.cover == path }) try { File(path).delete() } catch (e: Exception) { }
+        }
     }
 
     fun hasFinished(): Boolean =
@@ -225,12 +246,13 @@ object Queue {
         while (true) {
             try {
                 val r = Engine.download(
-                    app, t.url, t.quality,
+                    app, t.url, t.fmt, t.quality,
                     onTitle = { n -> post(t, g) { title = n } },
+                    onMeta = { a, d, c -> post(t, g) { artist = a; duration = d; cover = c } },
                     onProgress = { pct -> post(t, g, false) { progress = pct } },
                     isCanceled = { t.gen != g },
                 )
-                Store.markDone(app, Engine.videoId(t.url))
+                Store.markDone(app, Engine.archiveKey(t.url, t.fmt))
                 post(t, g) {
                     state = S.DONE
                     progress = 100

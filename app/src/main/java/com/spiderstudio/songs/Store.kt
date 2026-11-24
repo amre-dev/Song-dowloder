@@ -18,6 +18,10 @@ object Store {
     fun tags(c: Context): Boolean = p(c).getBoolean("tags", true)
     fun setTags(c: Context, v: Boolean) = p(c).edit().putBoolean("tags", v).apply()
 
+    /** عند مشاركة رابط من يوتيوب: true = افتح ورقة الخيارات، false = نزّل صوت مباشرة. */
+    fun shareOptions(c: Context): Boolean = p(c).getBoolean("share_options", false)
+    fun setShareOptions(c: Context, v: Boolean) = p(c).edit().putBoolean("share_options", v).apply()
+
     fun isDone(c: Context, id: String): Boolean =
         p(c).getStringSet("done", emptySet())?.contains(id) == true
 

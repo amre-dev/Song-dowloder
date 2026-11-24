@@ -1,7 +1,9 @@
 package com.spiderstudio.songs
 
 import android.content.Context
+import android.graphics.BitmapFactory
 import android.text.format.Formatter
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -33,6 +35,11 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -61,7 +68,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
@@ -82,10 +91,21 @@ import androidx.compose.ui.unit.sp
 object UiState {
     var url by mutableStateOf("")
     var status by mutableStateOf("")
+
+    // ورقة الخيارات (الصيغ المتاحة للفيديو)
+    var sheetOpen by mutableStateOf(false)
+    var sheetError by mutableStateOf<String?>(null)
+    var analysis by mutableStateOf<Engine.Analysis?>(null)
 }
 
 @Composable
-fun AppRoot(onAdd: () -> Unit, onPaste: () -> Unit, onOpen: (Queue.Task) -> Unit) {
+fun AppRoot(
+    onAdd: () -> Unit,
+    onOptions: () -> Unit,
+    onPick: (String) -> Unit,
+    onPaste: () -> Unit,
+    onOpen: (Queue.Task) -> Unit,
+) {
     // الواجهة عربية: نفرض RTL بغض النظر عن لغة الجهاز
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
         var tab by rememberSaveable { mutableIntStateOf(0) }
@@ -94,9 +114,10 @@ fun AppRoot(onAdd: () -> Unit, onPaste: () -> Unit, onOpen: (Queue.Task) -> Unit
             bottomBar = { BottomBar(tab) { tab = it } },
         ) { pad ->
             Box(Modifier.padding(pad).fillMaxSize()) {
-                if (tab == 0) HomeScreen(onAdd, onPaste, onOpen) else SettingsScreen()
+                if (tab == 0) HomeScreen(onAdd, onOptions, onPaste, onOpen) else SettingsScreen()
             }
         }
+        if (UiState.sheetOpen) OptionsSheet(onPick)
     }
 }
 
@@ -126,7 +147,7 @@ private fun BottomBar(tab: Int, onTab: (Int) -> Unit) {
 // ======================= الشاشة الرئيسية =======================
 
 @Composable
-private fun HomeScreen(onAdd: () -> Unit, onPaste: () -> Unit, onOpen: (Queue.Task) -> Unit) {
+private fun HomeScreen(onAdd: () -> Unit, onOptions: () -> Unit, onPaste: () -> Unit, onOpen: (Queue.Task) -> Unit) {
     val sorted = Queue.tasks.sortedWith(compareByDescending<Queue.Task> { it.batch }.thenBy { it.id })
 
     LazyColumn(
@@ -135,7 +156,7 @@ private fun HomeScreen(onAdd: () -> Unit, onPaste: () -> Unit, onOpen: (Queue.Ta
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         item { Header() }
-        item { LinkCard(onAdd, onPaste) }
+        item { LinkCard(onAdd, onOptions, onPaste) }
         item { SectionHeader() }
         if (sorted.isEmpty()) {
             item { EmptyState() }
@@ -164,7 +185,7 @@ private fun Header() {
 }
 
 @Composable
-private fun LinkCard(onAdd: () -> Unit, onPaste: () -> Unit) {
+private fun LinkCard(onAdd: () -> Unit, onOptions: () -> Unit, onPaste: () -> Unit) {
     val shape = RoundedCornerShape(22.dp)
     Column(
         Modifier.fillMaxWidth().clip(shape).background(C.Card).border(1.dp, C.Border, shape).padding(14.dp),
@@ -198,21 +219,37 @@ private fun LinkCard(onAdd: () -> Unit, onPaste: () -> Unit) {
                 cursorColor = C.Teal,
             ),
         )
-        Button(
-            onClick = onAdd,
-            enabled = UiState.url.isNotBlank(),
-            modifier = Modifier.fillMaxWidth().height(52.dp),
-            shape = RoundedCornerShape(26.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = C.Teal,
-                contentColor = C.OnTeal,
-                disabledContainerColor = C.Card2,
-                disabledContentColor = C.Muted,
-            ),
-        ) {
-            Icon(AppIcons.Download, contentDescription = null, modifier = Modifier.size(20.dp))
-            Spacer(Modifier.width(8.dp))
-            Text("تنزيل", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Button(
+                onClick = onAdd,
+                enabled = UiState.url.isNotBlank(),
+                modifier = Modifier.weight(1f).height(52.dp),
+                shape = RoundedCornerShape(26.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = C.Teal,
+                    contentColor = C.OnTeal,
+                    disabledContainerColor = C.Card2,
+                    disabledContentColor = C.Muted,
+                ),
+            ) {
+                Icon(AppIcons.Download, contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("تنزيل صوت", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            }
+            OutlinedButton(
+                onClick = onOptions,
+                enabled = UiState.url.isNotBlank(),
+                modifier = Modifier.weight(1f).height(52.dp),
+                shape = RoundedCornerShape(26.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp),
+                border = BorderStroke(1.dp, if (UiState.url.isNotBlank()) C.Teal else C.Border),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = C.Teal, disabledContentColor = C.Muted),
+            ) {
+                Icon(AppIcons.Video, contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("فيديو وخيارات", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            }
         }
         if (UiState.status.isNotEmpty()) {
             Text(
@@ -271,23 +308,31 @@ private fun TaskCard(t: Queue.Task, onOpen: (Queue.Task) -> Unit) {
             .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        StateBadge(t.state)
+        Cover(t)
         Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(
                 t.title, color = C.Text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
                 maxLines = 2, overflow = TextOverflow.Ellipsis,
             )
+            val metaLine = listOfNotNull(
+                t.artist.ifEmpty { null },
+                if (t.fmt.startsWith("mp4:")) "MP4 ${t.fmt.substringAfter(':')}p" else null,
+            ).joinToString(" • ")
+            if (metaLine.isNotEmpty()) {
+                Text(metaLine, color = C.Teal, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
             Text(
                 subtitle(ctx, t),
                 color = if (t.state == Queue.S.FAILED) C.Red else C.Muted,
                 fontSize = 12.sp,
             )
-            if (t.state == Queue.S.DONE && t.note.isNotEmpty()) {
-                Text(t.note, color = C.Muted, fontSize = 11.sp)
+            // نعرض الملاحظة فقط لو في مشكلة (مثلاً فشل تضمين الوسوم)
+            if (t.state == Queue.S.DONE && t.note.startsWith("⚠")) {
+                Text(t.note, color = C.Red, fontSize = 11.sp)
             }
             if (active) {
-                Spacer(Modifier.height(2.dp))
+                Spacer(Modifier.height(3.dp))
                 val bar = Modifier.fillMaxWidth().height(5.dp).clip(CircleShape)
                 if (t.state == Queue.S.RUNNING && t.progress > 0) {
                     LinearProgressIndicator(
@@ -319,23 +364,58 @@ private fun SmallAction(icon: ImageVector, desc: String, tint: androidx.compose.
     }
 }
 
+/** غلاف الأغنية (مربّع بزوايا دائرية)، أو أيقونة بديلة لو ما في غلاف، مع شارة حالة صغيرة. */
 @Composable
-private fun StateBadge(state: Queue.S) {
-    val (bg, icon, tint) = when (state) {
-        Queue.S.DONE -> Triple(C.Teal.copy(alpha = 0.14f), Icons.Default.CheckCircle, C.Teal)
-        Queue.S.FAILED -> Triple(C.Red.copy(alpha = 0.14f), Icons.Default.Warning, C.Red)
-        Queue.S.WAITING, Queue.S.RUNNING -> Triple(C.Teal.copy(alpha = 0.14f), AppIcons.MusicNote, C.Teal)
-        else -> Triple(C.Card2, AppIcons.MusicNote, C.Muted)
-    }
-    Box(Modifier.size(44.dp).clip(CircleShape).background(bg), contentAlignment = Alignment.Center) {
-        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
+private fun Cover(t: Queue.Task) {
+    val bmp = remember(t.cover) { t.cover?.let { BitmapFactory.decodeFile(it)?.asImageBitmap() } }
+    val shape = RoundedCornerShape(14.dp)
+
+    Box(Modifier.size(60.dp)) {
+        if (bmp != null) {
+            Image(
+                bitmap = bmp, contentDescription = null, contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize().clip(shape),
+            )
+        } else {
+            val failed = t.state == Queue.S.FAILED
+            Box(
+                Modifier.fillMaxSize().clip(shape)
+                    .background(if (failed) C.Red.copy(alpha = 0.14f) else C.Teal.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    AppIcons.MusicNote, contentDescription = null,
+                    tint = if (failed) C.Red else C.Teal, modifier = Modifier.size(26.dp),
+                )
+            }
+        }
+        val badge: Pair<ImageVector, androidx.compose.ui.graphics.Color>? = when (t.state) {
+            Queue.S.DONE -> Icons.Default.CheckCircle to C.Teal
+            Queue.S.FAILED -> Icons.Default.Warning to C.Red
+            else -> null
+        }
+        if (badge != null) {
+            Box(
+                Modifier.align(Alignment.BottomEnd).size(22.dp).clip(CircleShape).background(C.Card).padding(2.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(badge.first, contentDescription = null, tint = badge.second, modifier = Modifier.size(18.dp))
+            }
+        }
     }
 }
+
+private fun fmtDuration(sec: Long): String =
+    String.format(java.util.Locale.getDefault(), "%d:%02d", sec / 60, sec % 60)
 
 private fun subtitle(ctx: Context, t: Queue.Task): String = when (t.state) {
     Queue.S.WAITING -> "بالانتظار"
     Queue.S.RUNNING -> if (t.progress > 0) "جاري التنزيل • ${t.progress}%" else "جاري التحضير…"
-    Queue.S.DONE -> "اكتمل" + if (t.size > 0) " • " + Formatter.formatShortFileSize(ctx, t.size) else ""
+    Queue.S.DONE -> listOfNotNull(
+        "اكتمل",
+        if (t.duration > 0) fmtDuration(t.duration) else null,
+        if (t.size > 0) Formatter.formatShortFileSize(ctx, t.size) else null,
+    ).joinToString(" • ")
     Queue.S.FAILED -> t.error ?: "فشل التنزيل"
     Queue.S.CANCELED -> "أُلغي"
     Queue.S.SKIPPED -> t.error ?: "نُزّلت سابقاً"
@@ -350,6 +430,7 @@ private fun SettingsScreen() {
     var parallel by remember { mutableIntStateOf(Store.parallel(ctx)) }
     var skip by remember { mutableStateOf(Store.skipDupes(ctx)) }
     var tags by remember { mutableStateOf(Store.tags(ctx)) }
+    var shareOpts by remember { mutableStateOf(Store.shareOptions(ctx)) }
     var confirmClear by remember { mutableStateOf(false) }
 
     Column(
@@ -370,6 +451,13 @@ private fun SettingsScreen() {
                 Segmented(listOf("1", "2", "3"), parallel - 1) {
                     parallel = it + 1
                     Store.setParallel(ctx, parallel)
+                }
+            }
+            HorizontalDivider(color = C.Border)
+            SettingRow("عند مشاركة رابط يوتيوب", "تنزيل صوت مباشرة، أو فتح ورقة الصيغ والدقات") {
+                Segmented(listOf("مباشر", "خيارات"), if (shareOpts) 1 else 0) {
+                    shareOpts = it == 1
+                    Store.setShareOptions(ctx, shareOpts)
                 }
             }
         }
@@ -477,5 +565,100 @@ private fun Segmented(options: List<String>, selected: Int, onSelect: (Int) -> U
                 Text(label, color = if (sel) C.OnTeal else C.Muted, fontSize = 13.sp, fontWeight = FontWeight.Bold)
             }
         }
+    }
+}
+
+
+// ======================= ورقة الخيارات (صيغ ودقات) =======================
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun OptionsSheet(onPick: (String) -> Unit) {
+    val ctx = LocalContext.current
+    val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = { UiState.sheetOpen = false },
+        sheetState = state,
+        containerColor = C.Card,
+        contentColor = C.Text,
+    ) {
+        Column(
+            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            val a = UiState.analysis
+            val err = UiState.sheetError
+            when {
+                err != null -> {
+                    Text("❌ $err", color = C.Red, fontSize = 14.sp)
+                    TextButton(onClick = { UiState.sheetOpen = false }) { Text("إغلاق", color = C.Teal) }
+                }
+                a == null -> Row(
+                    Modifier.fillMaxWidth().padding(vertical = 28.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                ) {
+                    CircularProgressIndicator(color = C.Teal, strokeWidth = 2.5.dp, modifier = Modifier.size(24.dp))
+                    Spacer(Modifier.width(12.dp))
+                    Text("جاري تحليل الرابط…", color = C.Muted, fontSize = 14.sp)
+                }
+                else -> {
+                    SheetHeader(a)
+                    Text("صوت", color = C.Teal, fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp))
+                    OptionRow(AppIcons.MusicNote, "m4a • أعلى جودة", sizeText(ctx, a.audioSize)) { onPick("m4a") }
+                    Text("فيديو (MP4)", color = C.Teal, fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp))
+                    if (a.videos.isEmpty()) {
+                        Text("ما في ستريم فيديو mp4 متاح لهذا الرابط", color = C.Muted, fontSize = 13.sp)
+                    } else {
+                        for (v in a.videos) {
+                            OptionRow(AppIcons.Video, v.label, sizeText(ctx, v.size)) { onPick("mp4:${v.height}") }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun sizeText(ctx: Context, bytes: Long): String =
+    if (bytes > 0) Formatter.formatShortFileSize(ctx, bytes) else ""
+
+@Composable
+private fun SheetHeader(a: Engine.Analysis) {
+    val bmp = remember(a.url) { a.cover?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() } }
+    val shape = RoundedCornerShape(14.dp)
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(64.dp).clip(shape).background(C.Card2), contentAlignment = Alignment.Center) {
+            if (bmp != null) {
+                Image(bitmap = bmp, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            } else {
+                Icon(AppIcons.MusicNote, contentDescription = null, tint = C.Muted)
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(a.title, color = C.Text, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            val meta = listOfNotNull(a.artist.ifEmpty { null }, if (a.durationSec > 0) fmtDuration(a.durationSec) else null).joinToString(" • ")
+            if (meta.isNotEmpty()) Text(meta, color = C.Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun OptionRow(icon: ImageVector, title: String, sub: String, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(16.dp)
+    Row(
+        Modifier.fillMaxWidth().clip(shape).background(C.Card2).clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(38.dp).clip(CircleShape).background(C.Teal.copy(alpha = 0.14f)), contentAlignment = Alignment.Center) {
+            Icon(icon, contentDescription = null, tint = C.Teal, modifier = Modifier.size(20.dp))
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, color = C.Text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            if (sub.isNotEmpty()) Text(sub, color = C.Muted, fontSize = 12.sp)
+        }
+        Icon(AppIcons.Download, contentDescription = null, tint = C.Teal, modifier = Modifier.size(20.dp))
     }
 }
