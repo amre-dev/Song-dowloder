@@ -21,6 +21,8 @@ object Store {
     fun isDone(c: Context, id: String): Boolean =
         p(c).getStringSet("done", emptySet())?.contains(id) == true
 
+    fun clearDone(c: Context) = p(c).edit().remove("done").apply()
+
     @Synchronized
     fun markDone(c: Context, id: String) {
         val s = HashSet(p(c).getStringSet("done", emptySet()) ?: emptySet())

@@ -11,7 +11,7 @@
         android:icon="@mipmap/ic_launcher"
         android:label="Amrtune"
         android:supportsRtl="true"
-        android:theme="@android:style/Theme.DeviceDefault.DayNight">
+        android:theme="@style/Theme.Amrtune">
 
         <activity
             android:name=".MainActivity"
