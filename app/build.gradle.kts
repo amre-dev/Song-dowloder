@@ -1,3 +1,5 @@
+import java.net.URL
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -85,7 +87,7 @@ val fetchLame = tasks.register("fetchLame") {
         var ok = false
         for (u in urls) {
             try {
-                java.net.URL(u).openStream().use { input -> tgz.outputStream().use { out -> input.copyTo(out) } }
+                URL(u).openStream().use { input -> tgz.outputStream().use { out -> input.copyTo(out) } }
                 if (tgz.length() > 500_000) { ok = true; break }
             } catch (e: Exception) {
                 println("LAME: failed to download from $u: $e")
