@@ -11,6 +11,7 @@ add_library(amrlame SHARED amrlame_jni.c ${LAME_SRC})
 # config.h بجانب هالملف، ومصدر LAME وlame.h بمجلد lame/
 target_include_directories(amrlame PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${LAME_DIR})
 target_compile_definitions(amrlame PRIVATE HAVE_CONFIG_H=1 LAME_LIBRARY_BUILD=1 NDEBUG=1)
-target_compile_options(amrlame PRIVATE -O2 -w)
+# amr_types.h: تعريف ieee754_float32_t قبل أي ملف LAME. -fcommon: نفس سلوك مترجمات أقدم يلي كتبت LAME عليها.
+target_compile_options(amrlame PRIVATE -O2 -w -fcommon "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/amr_types.h")
 target_link_options(amrlame PRIVATE -Wl,-z,max-page-size=16384)
 target_link_libraries(amrlame m log)
