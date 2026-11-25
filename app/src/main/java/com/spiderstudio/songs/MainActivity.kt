@@ -121,7 +121,7 @@ class MainActivity : ComponentActivity() {
             try {
                 val items = Engine.resolve(url)
                 runOnUiThread {
-                    Queue.add(this, items)
+                    Queue.add(this, items, Store.quickFmt(this))
                     UiState.status = if (items.size > 1) "أُضيفت ${items.size} أغنية للقائمة" else ""
                     UiState.url = ""
                 }
@@ -146,7 +146,14 @@ class MainActivity : ComponentActivity() {
         try {
             startActivity(
                 Intent(Intent.ACTION_VIEW)
-                    .setDataAndType(Uri.parse(u), if (t.fmt.startsWith("mp4")) "video/mp4" else "audio/mp4")
+                    .setDataAndType(
+                        Uri.parse(u),
+                        when {
+                            t.fmt.startsWith("mp4") -> "video/mp4"
+                            t.fmt == "mp3" -> "audio/mpeg"
+                            else -> "audio/mp4"
+                        },
+                    )
                     .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             )
         } catch (e: Exception) {

@@ -12,8 +12,18 @@ android {
         applicationId = "com.spiderstudio.songs"
         minSdk = 29
         targetSdk = 34
-        versionCode = 7
-        versionName = "0.5"
+        versionCode = 8
+        versionName = "0.6"
+
+        // كود MP3 الأصلي (LAME): نكتفي بمعمارية الموبايلات الحديثة
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     // مفتاح debug ثابت (مرفوع بالمستودع) حتى تتحدّث النسخ فوق بعضها بدون حذف
@@ -56,4 +66,41 @@ dependencies {
     implementation("androidx.compose.material:material-icons-core")
     implementation("androidx.activity:activity-compose:1.9.3")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.0.4")
+}
+
+// ---- LAME (مشفّر MP3): مصدره بينزل تلقائياً أول مرة (مو مخزّن بالمستودع) ----
+val lameDir = layout.projectDirectory.dir("src/main/cpp/lame").asFile
+val fetchLame = tasks.register("fetchLame") {
+    onlyIf { !File(lameDir, "lame.h").exists() }
+    doLast {
+        val work = layout.buildDirectory.dir("lame-src").get().asFile
+        work.deleteRecursively()
+        work.mkdirs()
+        val tgz = File(work, "lame.tar.gz")
+        val urls = listOf(
+            "https://deb.debian.org/debian/pool/main/l/lame/lame_3.100.orig.tar.gz",
+            "https://archive.ubuntu.com/ubuntu/pool/universe/l/lame/lame_3.100.orig.tar.gz",
+            "https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz",
+        )
+        var ok = false
+        for (u in urls) {
+            try {
+                java.net.URL(u).openStream().use { input -> tgz.outputStream().use { out -> input.copyTo(out) } }
+                if (tgz.length() > 500_000) { ok = true; break }
+            } catch (e: Exception) {
+                println("LAME: failed to download from $u: $e")
+            }
+        }
+        if (!ok) throw GradleException("Could not download the LAME sources from any mirror")
+        println("LAME: downloaded ${tgz.length()} bytes")
+
+        val ext = File(work, "x")
+        copy { from(tarTree(resources.gzip(tgz))); into(ext) }
+        val root = ext.listFiles()!!.first { it.isDirectory }
+        copy { from(File(root, "libmp3lame")) { include("*.c", "*.h", "vector/*.h") }; into(lameDir) }
+        copy { from(File(root, "include/lame.h")); into(lameDir) }
+    }
+}
+tasks.configureEach {
+    if (name == "preBuild" || name.startsWith("configureCMake")) dependsOn(fetchLame)
 }

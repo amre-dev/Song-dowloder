@@ -102,6 +102,9 @@ object Engine {
         val thumb = cover?.let { saveThumb(context, videoId(url), it) }
         onMeta(artist, info.duration, thumb)
         if (isCanceled()) throw Canceled()
+        if (fmt == "mp3") {
+            return downloadMp3(context, info, artist, cover, pickAudio(info.audioStreams, "high") ?: stream, onProgress, isCanceled)
+        }
         if (fmt.startsWith("mp4")) return downloadVideo(context, info, fmt, pickAudio(info.audioStreams, "high") ?: stream, onProgress, isCanceled)
         val tags: ByteArray? = if (Store.tags(context)) Mp4Tags.build(info.name, artist, cover) else null
 
@@ -122,6 +125,55 @@ object Engine {
             }
         }
         return Result(info.name, saved.bytes, saved.uri, stream.averageBitrate, note)
+    }
+
+    // ======================= MP3 =======================
+
+    private const val MP3_KBPS = 192
+
+    private fun downloadMp3(
+        context: Context,
+        info: StreamInfo,
+        artist: String,
+        cover: ByteArray?,
+        audio: AudioStream,
+        onProgress: (Int) -> Unit,
+        isCanceled: () -> Boolean,
+    ): Result {
+        val resolver = context.contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.Audio.Media.DISPLAY_NAME, safeName(info.name) + ".mp3")
+            put(MediaStore.Audio.Media.TITLE, info.name)
+            put(MediaStore.Audio.Media.ARTIST, artist)
+            put(MediaStore.Audio.Media.MIME_TYPE, "audio/mpeg")
+            put(MediaStore.Audio.Media.RELATIVE_PATH, "Music/SongsDownloader")
+            put(MediaStore.Audio.Media.IS_PENDING, 1)
+        }
+        val uri = resolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values)
+            ?: throw IOException("فشل إنشاء الملف بالتخزين")
+
+        val tmpDir = java.io.File(context.cacheDir, "mux").apply { mkdirs() }
+        val src = java.io.File(tmpDir, "${System.nanoTime()}.src.m4a")
+        try {
+            // 0..45%: تنزيل أفضل صوت، 45..100%: فك الترميز + تشفير MP3
+            src.outputStream().use { fetch(audio.content, it, { p -> onProgress(p * 45 / 100) }, isCanceled) }
+            val id3 = if (Store.tags(context)) Id3.build(info.name, artist, cover) else null
+
+            resolver.openOutputStream(uri)?.use { raw ->
+                val out = java.io.BufferedOutputStream(raw, 64 * 1024)
+                Mp3.encode(src, out, id3, MP3_KBPS, { p -> onProgress(45 + p * 55 / 100) }, isCanceled)
+                out.flush()
+            } ?: throw IOException("فشل فتح الملف للكتابة")
+
+            resolver.update(uri, ContentValues().apply { put(MediaStore.Audio.Media.IS_PENDING, 0) }, null, null)
+            val size = resolver.openFileDescriptor(uri, "r")?.use { it.statSize } ?: 0L
+            return Result(info.name, size, uri, MP3_KBPS, "🎵 MP3 ${MP3_KBPS}k")
+        } catch (e: Throwable) {
+            resolver.delete(uri, null, null)
+            throw e
+        } finally {
+            src.delete()
+        }
     }
 
     // ======================= فيديو mp4 =======================

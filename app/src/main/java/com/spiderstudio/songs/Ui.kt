@@ -317,7 +317,11 @@ private fun TaskCard(t: Queue.Task, onOpen: (Queue.Task) -> Unit) {
             )
             val metaLine = listOfNotNull(
                 t.artist.ifEmpty { null },
-                if (t.fmt.startsWith("mp4:")) "MP4 ${t.fmt.substringAfter(':')}p" else null,
+                when {
+                    t.fmt.startsWith("mp4:") -> "MP4 ${t.fmt.substringAfter(':')}p"
+                    t.fmt == "mp3" -> "MP3"
+                    else -> null
+                },
             ).joinToString(" • ")
             if (metaLine.isNotEmpty()) {
                 Text(metaLine, color = C.Teal, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -431,6 +435,7 @@ private fun SettingsScreen() {
     var skip by remember { mutableStateOf(Store.skipDupes(ctx)) }
     var tags by remember { mutableStateOf(Store.tags(ctx)) }
     var shareOpts by remember { mutableStateOf(Store.shareOptions(ctx)) }
+    var quickFmt by remember { mutableStateOf(Store.quickFmt(ctx)) }
     var confirmClear by remember { mutableStateOf(false) }
 
     Column(
@@ -451,6 +456,13 @@ private fun SettingsScreen() {
                 Segmented(listOf("1", "2", "3"), parallel - 1) {
                     parallel = it + 1
                     Store.setParallel(ctx, parallel)
+                }
+            }
+            HorizontalDivider(color = C.Border)
+            SettingRow("صيغة التنزيل السريع", "زر \"تنزيل صوت\" ومشاركة الرابط المباشرة") {
+                Segmented(listOf("m4a", "mp3"), if (quickFmt == "mp3") 1 else 0) {
+                    quickFmt = if (it == 1) "mp3" else "m4a"
+                    Store.setQuickFmt(ctx, quickFmt)
                 }
             }
             HorizontalDivider(color = C.Border)
@@ -605,7 +617,11 @@ private fun OptionsSheet(onPick: (String) -> Unit) {
                 else -> {
                     SheetHeader(a)
                     Text("صوت", color = C.Teal, fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp))
-                    OptionRow(AppIcons.MusicNote, "m4a • أعلى جودة", sizeText(ctx, a.audioSize)) { onPick("m4a") }
+                    OptionRow(AppIcons.MusicNote, "m4a • أعلى جودة (بدون تحويل)", sizeText(ctx, a.audioSize)) { onPick("m4a") }
+                    OptionRow(
+                        AppIcons.MusicNote, "mp3 • 192 kbps (توافق أوسع)",
+                        if (a.durationSec > 0) "≈ " + sizeText(ctx, a.durationSec * 24_000L) else "",
+                    ) { onPick("mp3") }
                     Text("فيديو (MP4)", color = C.Teal, fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp))
                     if (a.videos.isEmpty()) {
                         Text("ما في ستريم فيديو mp4 متاح لهذا الرابط", color = C.Muted, fontSize = 13.sp)

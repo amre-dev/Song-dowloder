@@ -22,6 +22,10 @@ object Store {
     fun shareOptions(c: Context): Boolean = p(c).getBoolean("share_options", false)
     fun setShareOptions(c: Context, v: Boolean) = p(c).edit().putBoolean("share_options", v).apply()
 
+    /** صيغة زر "تنزيل صوت" السريع (ومشاركة الرابط المباشرة): m4a أو mp3. */
+    fun quickFmt(c: Context): String = p(c).getString("quick_fmt", "m4a") ?: "m4a"
+    fun setQuickFmt(c: Context, v: String) = p(c).edit().putString("quick_fmt", v).apply()
+
     fun isDone(c: Context, id: String): Boolean =
         p(c).getStringSet("done", emptySet())?.contains(id) == true
 
