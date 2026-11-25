@@ -26,6 +26,18 @@ object Store {
     fun quickFmt(c: Context): String = p(c).getString("quick_fmt", "m4a") ?: "m4a"
     fun setQuickFmt(c: Context, v: String) = p(c).edit().putString("quick_fmt", v).apply()
 
+    fun searchHistory(c: Context): List<String> =
+        (p(c).getString("search_history", "") ?: "").split("\n").filter { it.isNotBlank() }
+
+    fun addSearch(c: Context, q: String) {
+        val clean = q.replace("\n", " ").trim()
+        if (clean.isEmpty()) return
+        val list = (listOf(clean) + searchHistory(c).filter { !it.equals(clean, ignoreCase = true) }).take(12)
+        p(c).edit().putString("search_history", list.joinToString("\n")).apply()
+    }
+
+    fun clearSearch(c: Context) = p(c).edit().remove("search_history").apply()
+
     fun isDone(c: Context, id: String): Boolean =
         p(c).getStringSet("done", emptySet())?.contains(id) == true
 

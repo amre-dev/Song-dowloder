@@ -20,6 +20,7 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
         )
         Queue.load(this)
+        SearchState.history = Store.searchHistory(this)
         setContent {
             AmrtuneTheme {
                 AppRoot(
@@ -28,6 +29,11 @@ class MainActivity : ComponentActivity() {
                     onPick = ::pickFormat,
                     onPaste = ::pasteFromClipboard,
                     onOpen = ::openFile,
+                    onSearch = ::runSearch,
+                    onMoreResults = ::loadMoreResults,
+                    onHitOpen = { openOptionsFor(it.url) },
+                    onHitQuick = ::quickDownload,
+                    onClearSearch = { Store.clearSearch(this); SearchState.history = emptyList() },
                 )
             }
         }
@@ -72,14 +78,20 @@ class MainActivity : ComponentActivity() {
 
     private var analyzeSeq = 0
 
-    /** يفتح ورقة الخيارات: يحلّل الرابط ويعرض الصيغ والدقات المتاحة. */
+    /** يفتح ورقة الخيارات للرابط اللي بحقل الإدخال. */
     private fun openOptions() {
         val url = Engine.findUrl(UiState.url)
         if (url == null) {
             UiState.status = "❌ الصق رابط صالح (يبدأ بـ http)"
             return
         }
+        openOptionsFor(url)
+    }
+
+    /** يحلّل الرابط ويعرض الصيغ والدقات المتاحة بورقة الخيارات. */
+    private fun openOptionsFor(url: String) {
         if (Engine.isPlaylist(url)) {
+            UiState.url = url
             UiState.status = "قوائم التشغيل بتنزل صوت حالياً"
             addFromInput()
             return
@@ -97,6 +109,85 @@ class MainActivity : ComponentActivity() {
                 runOnUiThread { if (seq == analyzeSeq && UiState.sheetOpen) UiState.sheetError = Engine.explain(e) }
             }
         }.start()
+    }
+
+    // ---------- البحث ----------
+
+    private var searchSeq = 0
+    private var session: Engine.SearchSession? = null
+
+    private fun runSearch(raw: String) {
+        val q = raw.trim()
+        if (q.isEmpty()) return
+        // رابط يوتيوب ملصوق بحقل البحث: نفتح خياراته مباشرة
+        Engine.findUrl(q)?.takeIf { it.contains("youtu") }?.let { openOptionsFor(it); return }
+
+        SearchState.query = q
+        Store.addSearch(this, q)
+        SearchState.history = Store.searchHistory(this)
+        val seq = ++searchSeq
+        val s = Engine.SearchSession(q)
+        session = s
+        SearchState.results.clear()
+        SearchState.error = null
+        SearchState.hasMore = false
+        SearchState.searched = true
+        SearchState.loading = true
+        Thread {
+            try {
+                val hits = Engine.searchFirst(s)
+                runOnUiThread {
+                    if (seq == searchSeq) {
+                        SearchState.results.addAll(hits)
+                        SearchState.hasMore = s.hasMore
+                        SearchState.loading = false
+                    }
+                }
+            } catch (e: Throwable) {
+                Log.e("Amrtune", "search failed", e)
+                runOnUiThread {
+                    if (seq == searchSeq) {
+                        SearchState.error = Engine.explain(e)
+                        SearchState.loading = false
+                    }
+                }
+            }
+        }.start()
+    }
+
+    private fun loadMoreResults() {
+        val s = session ?: return
+        if (SearchState.loading || !s.hasMore) return
+        val seq = searchSeq
+        SearchState.loading = true
+        Thread {
+            try {
+                val hits = Engine.searchMore(s)
+                runOnUiThread {
+                    if (seq == searchSeq) {
+                        val have = SearchState.results.map { it.url }.toHashSet()
+                        SearchState.results.addAll(hits.filter { it.url !in have })
+                        SearchState.hasMore = s.hasMore
+                        SearchState.loading = false
+                    }
+                }
+            } catch (e: Throwable) {
+                Log.e("Amrtune", "search more failed", e)
+                runOnUiThread {
+                    if (seq == searchSeq) {
+                        SearchState.hasMore = false
+                        SearchState.loading = false
+                    }
+                }
+            }
+        }.start()
+    }
+
+    /** زر التنزيل السريع بنتيجة البحث: بالصيغة الافتراضية للتنزيل السريع. */
+    private fun quickDownload(hit: Engine.SearchHit) {
+        requestNotificationPermissionIfNeeded()
+        Queue.add(this, listOf(Engine.Item(hit.url, hit.title)), Store.quickFmt(this))
+        Toast.makeText(this, "أُضيفت للتنزيلات", Toast.LENGTH_SHORT).show()
     }
 
     /** اختيار صيغة من الورقة: يضيف المهمة بالصيغة المطلوبة. */

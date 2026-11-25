@@ -10,6 +10,7 @@ import android.media.MediaMetadataRetriever
 import android.media.MediaMuxer
 import android.net.Uri
 import android.provider.MediaStore
+import org.schabi.newpipe.extractor.InfoItem
 import org.schabi.newpipe.extractor.MediaFormat
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.Page
@@ -17,10 +18,13 @@ import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.exceptions.ContentNotAvailableException
 import org.schabi.newpipe.extractor.exceptions.ExtractionException
 import org.schabi.newpipe.extractor.exceptions.ReCaptchaException
+import org.schabi.newpipe.extractor.linkhandler.SearchQueryHandler
 import org.schabi.newpipe.extractor.playlist.PlaylistInfo
+import org.schabi.newpipe.extractor.search.SearchInfo
 import org.schabi.newpipe.extractor.stream.AudioStream
 import org.schabi.newpipe.extractor.stream.DeliveryMethod
 import org.schabi.newpipe.extractor.stream.StreamInfo
+import org.schabi.newpipe.extractor.stream.StreamInfoItem
 import org.schabi.newpipe.extractor.stream.VideoStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -125,6 +129,42 @@ object Engine {
             }
         }
         return Result(info.name, saved.bytes, saved.uri, stream.averageBitrate, note)
+    }
+
+    // ======================= بحث يوتيوب =======================
+
+    class SearchHit(val url: String, val title: String, val channel: String, val durationSec: Long)
+
+    /** جلسة بحث: بتحفظ مقبض الاستعلام والصفحة التالية لتحميل المزيد. */
+    class SearchSession(val query: String) {
+        internal var handler: SearchQueryHandler? = null
+        internal var next: Page? = null
+        val hasMore: Boolean get() = next != null
+    }
+
+    private fun toHits(items: List<InfoItem>): List<SearchHit> =
+        items.filterIsInstance<StreamInfoItem>().map {
+            SearchHit(it.url, it.name ?: "", it.uploaderName ?: "", it.duration)
+        }
+
+    /** أول صفحة نتائج (فيديوهات فقط). خارج الـ main thread. */
+    fun searchFirst(s: SearchSession): List<SearchHit> {
+        init()
+        val yt = ServiceList.YouTube
+        val qh = yt.searchQHFactory.fromQuery(s.query, listOf("videos"), "")
+        s.handler = qh
+        val info = SearchInfo.getInfo(yt, qh)
+        s.next = info.nextPage
+        return toHits(info.relatedItems)
+    }
+
+    /** الصفحة التالية من نفس البحث. */
+    fun searchMore(s: SearchSession): List<SearchHit> {
+        val qh = s.handler ?: return emptyList()
+        val page = s.next ?: return emptyList()
+        val more = SearchInfo.getMoreItems(ServiceList.YouTube, qh, page)
+        s.next = more.nextPage
+        return toHits(more.items)
     }
 
     // ======================= MP3 =======================

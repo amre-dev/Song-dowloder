@@ -32,6 +32,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
@@ -105,6 +106,11 @@ fun AppRoot(
     onPick: (String) -> Unit,
     onPaste: () -> Unit,
     onOpen: (Queue.Task) -> Unit,
+    onSearch: (String) -> Unit,
+    onMoreResults: () -> Unit,
+    onHitOpen: (Engine.SearchHit) -> Unit,
+    onHitQuick: (Engine.SearchHit) -> Unit,
+    onClearSearch: () -> Unit,
 ) {
     // الواجهة عربية: نفرض RTL بغض النظر عن لغة الجهاز
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
@@ -114,7 +120,11 @@ fun AppRoot(
             bottomBar = { BottomBar(tab) { tab = it } },
         ) { pad ->
             Box(Modifier.padding(pad).fillMaxSize()) {
-                if (tab == 0) HomeScreen(onAdd, onOptions, onPaste, onOpen) else SettingsScreen()
+                when (tab) {
+                    0 -> HomeScreen(onAdd, onOptions, onPaste, onOpen)
+                    1 -> SearchScreen(onSearch, onMoreResults, onHitOpen, onHitQuick, onClearSearch)
+                    else -> SettingsScreen()
+                }
             }
         }
         if (UiState.sheetOpen) OptionsSheet(onPick)
@@ -138,6 +148,11 @@ private fun BottomBar(tab: Int, onTab: (Int) -> Unit) {
         )
         NavigationBarItem(
             selected = tab == 1, onClick = { onTab(1) }, colors = colors,
+            icon = { Icon(Icons.Default.Search, contentDescription = null) },
+            label = { Text("بحث") },
+        )
+        NavigationBarItem(
+            selected = tab == 2, onClick = { onTab(2) }, colors = colors,
             icon = { Icon(Icons.Default.Settings, contentDescription = null) },
             label = { Text("الإعدادات") },
         )
