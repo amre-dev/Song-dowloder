@@ -20,6 +20,7 @@ import org.schabi.newpipe.extractor.exceptions.ExtractionException
 import org.schabi.newpipe.extractor.exceptions.ReCaptchaException
 import org.schabi.newpipe.extractor.linkhandler.SearchQueryHandler
 import org.schabi.newpipe.extractor.playlist.PlaylistInfo
+import org.schabi.newpipe.extractor.playlist.PlaylistInfoItem
 import org.schabi.newpipe.extractor.search.SearchInfo
 import org.schabi.newpipe.extractor.stream.AudioStream
 import org.schabi.newpipe.extractor.stream.DeliveryMethod
@@ -133,25 +134,54 @@ object Engine {
 
     // ======================= بحث يوتيوب =======================
 
-    class SearchHit(val url: String, val title: String, val channel: String, val durationSec: Long)
+    class SearchHit(
+        val url: String,
+        val title: String,
+        val channel: String,
+        val durationSec: Long,
+        val isPlaylist: Boolean = false,
+        val count: Long = 0,
+    )
+
+    class PlaylistDetails(val title: String, val owner: String, val total: Long, val items: List<SearchHit>)
 
     /** جلسة بحث: بتحفظ مقبض الاستعلام والصفحة التالية لتحميل المزيد. */
-    class SearchSession(val query: String) {
+    class SearchSession(val query: String, val filter: String = "videos") {
         internal var handler: SearchQueryHandler? = null
         internal var next: Page? = null
         val hasMore: Boolean get() = next != null
     }
 
     private fun toHits(items: List<InfoItem>): List<SearchHit> =
-        items.filterIsInstance<StreamInfoItem>().map {
-            SearchHit(it.url, it.name ?: "", it.uploaderName ?: "", it.duration)
+        items.mapNotNull {
+            when (it) {
+                is StreamInfoItem -> SearchHit(it.url, it.name ?: "", it.uploaderName ?: "", it.duration)
+                is PlaylistInfoItem -> SearchHit(it.url, it.name ?: "", it.uploaderName ?: "", 0L, true, it.streamCount)
+                else -> null
+            }
         }
+
+    /** تفاصيل قائمة تشغيل: العنوان وأغانيها (حتى [limit]) مع المدد. خارج الـ main thread. */
+    fun playlistDetails(url: String, limit: Int = 300): PlaylistDetails {
+        init()
+        val yt = ServiceList.YouTube
+        val info = PlaylistInfo.getInfo(yt, url)
+        val out = ArrayList<SearchHit>(toHits(info.relatedItems))
+        var page: Page? = info.nextPage
+        while (page != null && out.size < limit) {
+            val more = PlaylistInfo.getMoreItems(yt, url, page)
+            out.addAll(toHits(more.items))
+            page = more.nextPage
+        }
+        val items = if (out.size > limit) out.subList(0, limit).toList() else out.toList()
+        return PlaylistDetails(info.name ?: "", info.uploaderName ?: "", info.streamCount, items)
+    }
 
     /** أول صفحة نتائج (فيديوهات فقط). خارج الـ main thread. */
     fun searchFirst(s: SearchSession): List<SearchHit> {
         init()
         val yt = ServiceList.YouTube
-        val qh = yt.searchQHFactory.fromQuery(s.query, listOf("videos"), "")
+        val qh = yt.searchQHFactory.fromQuery(s.query, listOf(s.filter), "")
         s.handler = qh
         val info = SearchInfo.getInfo(yt, qh)
         s.next = info.nextPage

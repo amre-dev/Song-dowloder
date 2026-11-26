@@ -24,6 +24,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -65,6 +66,7 @@ object SearchState {
     var loading by mutableStateOf(false)
     var error by mutableStateOf<String?>(null)
     var searched by mutableStateOf(false)
+    var filter by mutableStateOf("videos")        // videos | playlists
     var hasMore by mutableStateOf(false)
     var history by mutableStateOf<List<String>>(emptyList())
     val results = mutableStateListOf<Engine.SearchHit>()
@@ -97,7 +99,7 @@ object Thumbs {
     }
 }
 
-private fun fmtDur(sec: Long): String =
+internal fun fmtDur(sec: Long): String =
     if (sec < 0) "LIVE"
     else if (sec >= 3600) String.format(java.util.Locale.getDefault(), "%d:%02d:%02d", sec / 3600, (sec % 3600) / 60, sec % 60)
     else String.format(java.util.Locale.getDefault(), "%d:%02d", sec / 60, sec % 60)
@@ -107,7 +109,7 @@ fun SearchScreen(
     onSearch: (String) -> Unit,
     onMore: () -> Unit,
     onOpen: (Engine.SearchHit) -> Unit,
-    onQuick: (Engine.SearchHit) -> Unit,
+    onFilter: (String) -> Unit,
     onClearHistory: () -> Unit,
 ) {
     val focus = LocalFocusManager.current
@@ -142,6 +144,14 @@ fun SearchScreen(
             ),
         )
 
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            FilterPill("فيديوهات", SearchState.filter == "videos") { onFilter("videos") }
+            FilterPill("قوائم تشغيل", SearchState.filter == "playlists") { onFilter("playlists") }
+        }
+
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
@@ -149,7 +159,7 @@ fun SearchScreen(
         ) {
             when {
                 SearchState.results.isNotEmpty() -> {
-                    items(SearchState.results, key = { it.url }) { hit -> ResultRow(hit, onOpen, onQuick) }
+                    items(SearchState.results, key = { it.url }) { hit -> ResultRow(hit, onOpen) }
                     if (SearchState.hasMore) {
                         item(key = "more") {
                             Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
@@ -206,11 +216,23 @@ fun SearchScreen(
 }
 
 @Composable
-private fun ResultRow(hit: Engine.SearchHit, onOpen: (Engine.SearchHit) -> Unit, onQuick: (Engine.SearchHit) -> Unit) {
+private fun FilterPill(label: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        Modifier.clip(RoundedCornerShape(20.dp))
+            .background(if (selected) C.Teal else C.Card2)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        Text(label, color = if (selected) C.OnTeal else C.Muted, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun ResultRow(hit: Engine.SearchHit, onOpen: (Engine.SearchHit) -> Unit) {
     val shape = RoundedCornerShape(16.dp)
     val id = remember(hit.url) { Engine.videoId(hit.url) }
     val bmp by produceState<ImageBitmap?>(initialValue = Thumbs.cached(id), id) {
-        if (value == null) value = withContext(Dispatchers.IO) { Thumbs.fetch(id) }
+        if (!hit.isPlaylist && value == null) value = withContext(Dispatchers.IO) { Thumbs.fetch(id) }
     }
 
     Row(
@@ -220,12 +242,17 @@ private fun ResultRow(hit: Engine.SearchHit, onOpen: (Engine.SearchHit) -> Unit,
     ) {
         Box(Modifier.width(120.dp).height(68.dp).clip(RoundedCornerShape(10.dp)).background(C.Card2)) {
             val b = bmp
-            if (b != null) {
+            if (hit.isPlaylist) {
+                Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Default.List, contentDescription = null, tint = C.Teal, modifier = Modifier.size(26.dp))
+                    if (hit.count > 0) Text("${hit.count} أغنية", color = C.Muted, fontSize = 11.sp)
+                }
+            } else if (b != null) {
                 Image(bitmap = b, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
             } else {
                 Icon(AppIcons.MusicNote, contentDescription = null, tint = C.Muted, modifier = Modifier.align(Alignment.Center).size(24.dp))
             }
-            if (hit.durationSec != 0L) {
+            if (!hit.isPlaylist && hit.durationSec != 0L) {
                 Text(
                     fmtDur(hit.durationSec), color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold,
                     modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp)
@@ -240,8 +267,6 @@ private fun ResultRow(hit: Engine.SearchHit, onOpen: (Engine.SearchHit) -> Unit,
                 Text(hit.channel, color = C.Teal, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
-        IconButton(onClick = { onQuick(hit) }, modifier = Modifier.size(40.dp)) {
-            Icon(AppIcons.Download, contentDescription = "تنزيل سريع", tint = C.Teal)
-        }
+        Icon(AppIcons.Download, contentDescription = null, tint = C.Teal, modifier = Modifier.padding(horizontal = 8.dp).size(20.dp))
     }
 }

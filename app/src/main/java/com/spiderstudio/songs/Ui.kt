@@ -62,6 +62,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -97,19 +98,25 @@ object UiState {
     var sheetOpen by mutableStateOf(false)
     var sheetError by mutableStateOf<String?>(null)
     var analysis by mutableStateOf<Engine.Analysis?>(null)
+
+    // ورقة اختيار أغاني قائمة تشغيل
+    var playlistOpen by mutableStateOf(false)
+    var playlistError by mutableStateOf<String?>(null)
+    var playlist by mutableStateOf<Engine.PlaylistDetails?>(null)
+    val selected = mutableStateListOf<String>()
 }
 
 @Composable
 fun AppRoot(
-    onAdd: () -> Unit,
     onOptions: () -> Unit,
     onPick: (String) -> Unit,
+    onPickPlaylist: (String) -> Unit,
     onPaste: () -> Unit,
     onOpen: (Queue.Task) -> Unit,
     onSearch: (String) -> Unit,
+    onFilter: (String) -> Unit,
     onMoreResults: () -> Unit,
     onHitOpen: (Engine.SearchHit) -> Unit,
-    onHitQuick: (Engine.SearchHit) -> Unit,
     onClearSearch: () -> Unit,
 ) {
     // الواجهة عربية: نفرض RTL بغض النظر عن لغة الجهاز
@@ -121,13 +128,14 @@ fun AppRoot(
         ) { pad ->
             Box(Modifier.padding(pad).fillMaxSize()) {
                 when (tab) {
-                    0 -> HomeScreen(onAdd, onOptions, onPaste, onOpen)
-                    1 -> SearchScreen(onSearch, onMoreResults, onHitOpen, onHitQuick, onClearSearch)
+                    0 -> HomeScreen(onOptions, onPaste, onOpen)
+                    1 -> SearchScreen(onSearch, onMoreResults, onHitOpen, onFilter, onClearSearch)
                     else -> SettingsScreen()
                 }
             }
         }
         if (UiState.sheetOpen) OptionsSheet(onPick)
+        if (UiState.playlistOpen) PlaylistSheet(onPickPlaylist)
     }
 }
 
@@ -162,7 +170,7 @@ private fun BottomBar(tab: Int, onTab: (Int) -> Unit) {
 // ======================= الشاشة الرئيسية =======================
 
 @Composable
-private fun HomeScreen(onAdd: () -> Unit, onOptions: () -> Unit, onPaste: () -> Unit, onOpen: (Queue.Task) -> Unit) {
+private fun HomeScreen(onOptions: () -> Unit, onPaste: () -> Unit, onOpen: (Queue.Task) -> Unit) {
     val sorted = Queue.tasks.sortedWith(compareByDescending<Queue.Task> { it.batch }.thenBy { it.id })
 
     LazyColumn(
@@ -171,7 +179,7 @@ private fun HomeScreen(onAdd: () -> Unit, onOptions: () -> Unit, onPaste: () -> 
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         item { Header() }
-        item { LinkCard(onAdd, onOptions, onPaste) }
+        item { LinkCard(onOptions, onPaste) }
         item { SectionHeader() }
         if (sorted.isEmpty()) {
             item { EmptyState() }
@@ -200,7 +208,7 @@ private fun Header() {
 }
 
 @Composable
-private fun LinkCard(onAdd: () -> Unit, onOptions: () -> Unit, onPaste: () -> Unit) {
+private fun LinkCard(onOptions: () -> Unit, onPaste: () -> Unit) {
     val shape = RoundedCornerShape(22.dp)
     Column(
         Modifier.fillMaxWidth().clip(shape).background(C.Card).border(1.dp, C.Border, shape).padding(14.dp),
@@ -225,7 +233,7 @@ private fun LinkCard(onAdd: () -> Unit, onOptions: () -> Unit, onPaste: () -> Un
                 }
             },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
-            keyboardActions = KeyboardActions(onGo = { onAdd() }),
+            keyboardActions = KeyboardActions(onGo = { onOptions() }),
             colors = TextFieldDefaults.colors(
                 focusedContainerColor = C.Card2,
                 unfocusedContainerColor = C.Card2,
@@ -234,37 +242,21 @@ private fun LinkCard(onAdd: () -> Unit, onOptions: () -> Unit, onPaste: () -> Un
                 cursorColor = C.Teal,
             ),
         )
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Button(
-                onClick = onAdd,
-                enabled = UiState.url.isNotBlank(),
-                modifier = Modifier.weight(1f).height(52.dp),
-                shape = RoundedCornerShape(26.dp),
-                contentPadding = PaddingValues(horizontal = 12.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = C.Teal,
-                    contentColor = C.OnTeal,
-                    disabledContainerColor = C.Card2,
-                    disabledContentColor = C.Muted,
-                ),
-            ) {
-                Icon(AppIcons.Download, contentDescription = null, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("تنزيل صوت", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-            }
-            OutlinedButton(
-                onClick = onOptions,
-                enabled = UiState.url.isNotBlank(),
-                modifier = Modifier.weight(1f).height(52.dp),
-                shape = RoundedCornerShape(26.dp),
-                contentPadding = PaddingValues(horizontal = 12.dp),
-                border = BorderStroke(1.dp, if (UiState.url.isNotBlank()) C.Teal else C.Border),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = C.Teal, disabledContentColor = C.Muted),
-            ) {
-                Icon(AppIcons.Video, contentDescription = null, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("فيديو وخيارات", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-            }
+        Button(
+            onClick = onOptions,
+            enabled = UiState.url.isNotBlank(),
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            shape = RoundedCornerShape(26.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = C.Teal,
+                contentColor = C.OnTeal,
+                disabledContainerColor = C.Card2,
+                disabledContentColor = C.Muted,
+            ),
+        ) {
+            Icon(AppIcons.Download, contentDescription = null, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("تنزيل", fontWeight = FontWeight.Bold, fontSize = 16.sp)
         }
         if (UiState.status.isNotEmpty()) {
             Text(
@@ -449,8 +441,6 @@ private fun SettingsScreen() {
     var parallel by remember { mutableIntStateOf(Store.parallel(ctx)) }
     var skip by remember { mutableStateOf(Store.skipDupes(ctx)) }
     var tags by remember { mutableStateOf(Store.tags(ctx)) }
-    var shareOpts by remember { mutableStateOf(Store.shareOptions(ctx)) }
-    var quickFmt by remember { mutableStateOf(Store.quickFmt(ctx)) }
     var confirmClear by remember { mutableStateOf(false) }
 
     Column(
@@ -471,20 +461,6 @@ private fun SettingsScreen() {
                 Segmented(listOf("1", "2", "3"), parallel - 1) {
                     parallel = it + 1
                     Store.setParallel(ctx, parallel)
-                }
-            }
-            HorizontalDivider(color = C.Border)
-            SettingRow("صيغة التنزيل السريع", "زر \"تنزيل صوت\" ومشاركة الرابط المباشرة") {
-                Segmented(listOf("m4a", "mp3"), if (quickFmt == "mp3") 1 else 0) {
-                    quickFmt = if (it == 1) "mp3" else "m4a"
-                    Store.setQuickFmt(ctx, quickFmt)
-                }
-            }
-            HorizontalDivider(color = C.Border)
-            SettingRow("عند مشاركة رابط يوتيوب", "تنزيل صوت مباشرة، أو فتح ورقة الصيغ والدقات") {
-                Segmented(listOf("مباشر", "خيارات"), if (shareOpts) 1 else 0) {
-                    shareOpts = it == 1
-                    Store.setShareOptions(ctx, shareOpts)
                 }
             }
         }

@@ -24,15 +24,15 @@ class MainActivity : ComponentActivity() {
         setContent {
             AmrtuneTheme {
                 AppRoot(
-                    onAdd = ::addFromInput,
                     onOptions = ::openOptions,
                     onPick = ::pickFormat,
+                    onPickPlaylist = ::pickPlaylist,
                     onPaste = ::pasteFromClipboard,
                     onOpen = ::openFile,
                     onSearch = ::runSearch,
+                    onFilter = ::changeFilter,
                     onMoreResults = ::loadMoreResults,
-                    onHitOpen = { openOptionsFor(it.url) },
-                    onHitQuick = ::quickDownload,
+                    onHitOpen = { if (it.isPlaylist) openPlaylistFor(it.url) else openOptionsFor(it.url) },
                     onClearSearch = { Store.clearSearch(this); SearchState.history = emptyList() },
                 )
             }
@@ -72,7 +72,7 @@ class MainActivity : ComponentActivity() {
         if (i?.action == Intent.ACTION_SEND) {
             val url = Engine.findUrl(i.getStringExtra(Intent.EXTRA_TEXT)) ?: return
             UiState.url = url
-            if (Store.shareOptions(this)) openOptions() else addFromInput()
+            openOptions()
         }
     }
 
@@ -91,9 +91,7 @@ class MainActivity : ComponentActivity() {
     /** يحلّل الرابط ويعرض الصيغ والدقات المتاحة بورقة الخيارات. */
     private fun openOptionsFor(url: String) {
         if (Engine.isPlaylist(url)) {
-            UiState.url = url
-            UiState.status = "قوائم التشغيل بتنزل صوت حالياً"
-            addFromInput()
+            openPlaylistFor(url)
             return
         }
         val seq = ++analyzeSeq
@@ -126,7 +124,7 @@ class MainActivity : ComponentActivity() {
         Store.addSearch(this, q)
         SearchState.history = Store.searchHistory(this)
         val seq = ++searchSeq
-        val s = Engine.SearchSession(q)
+        val s = Engine.SearchSession(q, SearchState.filter)
         session = s
         SearchState.results.clear()
         SearchState.error = null
@@ -183,13 +181,6 @@ class MainActivity : ComponentActivity() {
         }.start()
     }
 
-    /** زر التنزيل السريع بنتيجة البحث: بالصيغة الافتراضية للتنزيل السريع. */
-    private fun quickDownload(hit: Engine.SearchHit) {
-        requestNotificationPermissionIfNeeded()
-        Queue.add(this, listOf(Engine.Item(hit.url, hit.title)), Store.quickFmt(this))
-        Toast.makeText(this, "أُضيفت للتنزيلات", Toast.LENGTH_SHORT).show()
-    }
-
     /** اختيار صيغة من الورقة: يضيف المهمة بالصيغة المطلوبة. */
     private fun pickFormat(fmt: String) {
         val a = UiState.analysis ?: return
@@ -198,29 +189,54 @@ class MainActivity : ComponentActivity() {
         UiState.sheetOpen = false
         UiState.url = ""
         UiState.status = ""
+        Toast.makeText(this, "أُضيفت للتنزيلات", Toast.LENGTH_SHORT).show()
     }
 
-    private fun addFromInput() {
-        val url = Engine.findUrl(UiState.url)
-        if (url == null) {
-            UiState.status = "❌ الصق رابط صالح (يبدأ بـ http)"
-            return
-        }
-        requestNotificationPermissionIfNeeded()
-        UiState.status = "🔎 جاري فحص الرابط…"
+    private fun changeFilter(f: String) {
+        if (SearchState.filter == f) return
+        SearchState.filter = f
+        if (SearchState.query.isNotBlank()) runSearch(SearchState.query)
+    }
+
+    // ---------- قوائم التشغيل ----------
+
+    private var playlistSeq = 0
+
+    private fun openPlaylistFor(url: String) {
+        val seq = ++playlistSeq
+        UiState.playlist = null
+        UiState.playlistError = null
+        UiState.selected.clear()
+        UiState.playlistOpen = true
         Thread {
             try {
-                val items = Engine.resolve(url)
+                val d = Engine.playlistDetails(url)
                 runOnUiThread {
-                    Queue.add(this, items, Store.quickFmt(this))
-                    UiState.status = if (items.size > 1) "أُضيفت ${items.size} أغنية للقائمة" else ""
-                    UiState.url = ""
+                    if (seq == playlistSeq && UiState.playlistOpen) {
+                        UiState.playlist = d
+                        UiState.selected.clear()
+                        UiState.selected.addAll(d.items.map { it.url })   // كل الأغاني محددة افتراضياً
+                    }
                 }
             } catch (e: Throwable) {
-                Log.e("Amrtune", "resolve failed", e)
-                runOnUiThread { UiState.status = "❌ " + Engine.explain(e) }
+                Log.e("Amrtune", "playlist failed", e)
+                runOnUiThread { if (seq == playlistSeq && UiState.playlistOpen) UiState.playlistError = Engine.explain(e) }
             }
         }.start()
+    }
+
+    /** تنزيل الأغاني المحددة من القائمة بالصيغة المختارة. */
+    private fun pickPlaylist(fmt: String) {
+        val d = UiState.playlist ?: return
+        val chosen = d.items.filter { it.url in UiState.selected }
+        if (chosen.isEmpty()) return
+        requestNotificationPermissionIfNeeded()
+        Queue.add(this, chosen.map { Engine.Item(it.url, it.title) }, fmt)
+        Store.setLastFmt(this, fmt)
+        UiState.playlistOpen = false
+        UiState.url = ""
+        UiState.status = ""
+        Toast.makeText(this, "أُضيفت ${chosen.size} أغنية للتنزيلات", Toast.LENGTH_SHORT).show()
     }
 
     private fun requestNotificationPermissionIfNeeded() {

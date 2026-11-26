@@ -38,6 +38,10 @@ object Store {
 
     fun clearSearch(c: Context) = p(c).edit().remove("search_history").apply()
 
+    /** آخر صيغة اختارها المستخدم بشاشة اختيار أغاني القائمة. */
+    fun lastFmt(c: Context): String = p(c).getString("last_fmt", "m4a") ?: "m4a"
+    fun setLastFmt(c: Context, v: String) = p(c).edit().putString("last_fmt", v).apply()
+
     fun isDone(c: Context, id: String): Boolean =
         p(c).getStringSet("done", emptySet())?.contains(id) == true
 
