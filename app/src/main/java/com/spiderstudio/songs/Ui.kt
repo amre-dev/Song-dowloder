@@ -8,6 +8,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -104,7 +105,19 @@ object UiState {
     var playlistError by mutableStateOf<String?>(null)
     var playlist by mutableStateOf<Engine.PlaylistDetails?>(null)
     val selected = mutableStateListOf<String>()
+
+    // نافذة تأكيد عامة (مثلاً: المقطع منزّل من قبل)
+    var confirm by mutableStateOf<Confirm?>(null)
 }
+
+class Confirm(
+    val title: String,
+    val message: String,
+    val positive: String,
+    val onPositive: () -> Unit,
+    val neutral: String? = null,
+    val onNeutral: (() -> Unit)? = null,
+)
 
 @Composable
 fun AppRoot(
@@ -136,6 +149,7 @@ fun AppRoot(
         }
         if (UiState.sheetOpen) OptionsSheet(onPick)
         if (UiState.playlistOpen) PlaylistSheet(onPickPlaylist)
+        UiState.confirm?.let { ConfirmDialog(it) }
     }
 }
 
@@ -221,7 +235,7 @@ private fun LinkCard(onOptions: () -> Unit, onPaste: () -> Unit) {
             singleLine = true,
             shape = RoundedCornerShape(14.dp),
             textStyle = TextStyle(color = C.Text, fontSize = 15.sp, textDirection = TextDirection.Content),
-            placeholder = { Text("ألصق رابط الأغنية أو قائمة التشغيل…", color = C.Muted, fontSize = 14.sp) },
+            placeholder = { Text("ألصق رابط فيديو أو قائمة تشغيل…", color = C.Muted, fontSize = 14.sp) },
             leadingIcon = { Icon(AppIcons.Link, contentDescription = null, tint = C.Muted) },
             trailingIcon = {
                 if (UiState.url.isEmpty()) {
@@ -270,17 +284,34 @@ private fun LinkCard(onOptions: () -> Unit, onPaste: () -> Unit) {
 
 @Composable
 private fun SectionHeader() {
-    Row(
-        Modifier.fillMaxWidth().padding(top = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
+    val ctx = LocalContext.current
+    val active = Queue.tasks.count { it.state == Queue.S.WAITING || it.state == Queue.S.RUNNING }
+    val failed = Queue.tasks.count { it.state == Queue.S.FAILED }
+    val finished = Queue.hasFinished()
+
+    Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
         Text("التنزيلات", color = C.Text, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-        if (Queue.tasks.isNotEmpty() && Queue.hasFinished()) {
-            TextButton(onClick = { Queue.clearFinished() }) {
-                Text("مسح المنتهي", color = C.Teal, fontSize = 14.sp)
+        if (active > 0 || failed > 0 || finished) {
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(top = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (active > 0) ActionPill("إلغاء الكل ($active)", C.Red) { Queue.cancelAll() }
+                if (failed > 0) ActionPill("إعادة الفاشلة ($failed)", C.Teal) { Queue.retryFailed(ctx) }
+                if (finished) ActionPill("مسح المنتهي", C.Muted) { Queue.clearFinished() }
             }
         }
+    }
+}
+
+@Composable
+private fun ActionPill(label: String, color: androidx.compose.ui.graphics.Color, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(18.dp)
+    Box(
+        Modifier.clip(shape).border(1.dp, color.copy(alpha = 0.6f), shape).clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 7.dp),
+    ) {
+        Text(label, color = color, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -294,7 +325,7 @@ private fun EmptyState() {
     ) {
         Icon(AppIcons.MusicNote, contentDescription = null, tint = C.Muted, modifier = Modifier.size(44.dp))
         Text("لا توجد تنزيلات حالياً", color = C.Text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-        Text("ابدأ بتنزيل أغنيتك الأولى الآن!", color = C.Muted, fontSize = 13.sp)
+        Text("ابدأ بتنزيل أول مقطع الآن!", color = C.Muted, fontSize = 13.sp)
     }
 }
 
@@ -375,7 +406,7 @@ private fun SmallAction(icon: ImageVector, desc: String, tint: androidx.compose.
     }
 }
 
-/** غلاف الأغنية (مربّع بزوايا دائرية)، أو أيقونة بديلة لو ما في غلاف، مع شارة حالة صغيرة. */
+/** غلاف المقطع (مربّع بزوايا دائرية)، أو أيقونة بديلة لو ما في غلاف، مع شارة حالة صغيرة. */
 @Composable
 private fun Cover(t: Queue.Task) {
     val bmp = remember(t.cover) { t.cover?.let { BitmapFactory.decodeFile(it)?.asImageBitmap() } }
@@ -420,7 +451,7 @@ private fun fmtDuration(sec: Long): String =
     String.format(java.util.Locale.getDefault(), "%d:%02d", sec / 60, sec % 60)
 
 private fun subtitle(ctx: Context, t: Queue.Task): String = when (t.state) {
-    Queue.S.WAITING -> "بالانتظار"
+    Queue.S.WAITING -> if (t.note.isNotEmpty()) t.note else "بالانتظار"
     Queue.S.RUNNING -> if (t.progress > 0) "جاري التنزيل • ${t.progress}%" else "جاري التحضير…"
     Queue.S.DONE -> listOfNotNull(
         "اكتمل",
@@ -429,7 +460,7 @@ private fun subtitle(ctx: Context, t: Queue.Task): String = when (t.state) {
     ).joinToString(" • ")
     Queue.S.FAILED -> t.error ?: "فشل التنزيل"
     Queue.S.CANCELED -> "أُلغي"
-    Queue.S.SKIPPED -> t.error ?: "نُزّلت سابقاً"
+    Queue.S.SKIPPED -> t.error ?: "نُزّل سابقاً"
 }
 
 // ======================= الإعدادات =======================
@@ -439,9 +470,16 @@ private fun SettingsScreen() {
     val ctx = LocalContext.current
     var quality by remember { mutableStateOf(Store.quality(ctx)) }
     var parallel by remember { mutableIntStateOf(Store.parallel(ctx)) }
-    var skip by remember { mutableStateOf(Store.skipDupes(ctx)) }
     var tags by remember { mutableStateOf(Store.tags(ctx)) }
     var confirmClear by remember { mutableStateOf(false) }
+    var wifiOnly by remember { mutableStateOf(Store.wifiOnly(ctx)) }
+    var showAbout by remember { mutableStateOf(false) }
+
+    if (showAbout) {
+        androidx.activity.compose.BackHandler { showAbout = false }
+        AboutScreen(onBack = { showAbout = false })
+        return
+    }
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
@@ -463,6 +501,14 @@ private fun SettingsScreen() {
                     Store.setParallel(ctx, parallel)
                 }
             }
+            HorizontalDivider(color = C.Border)
+            SettingRow("واي فاي فقط", "ما بيستعمل بيانات الجوال، وبينتظر الواي فاي") {
+                Switch(
+                    checked = wifiOnly,
+                    onCheckedChange = { wifiOnly = it; Store.setWifiOnly(ctx, it) },
+                    colors = switchColors(),
+                )
+            }
         }
 
         SettingsSection("الملفات") {
@@ -474,15 +520,7 @@ private fun SettingsScreen() {
                 )
             }
             HorizontalDivider(color = C.Border)
-            SettingRow("تخطي المنزّل سابقاً", "ما يعيد تنزيل أغنية نزّلتها قبل") {
-                Switch(
-                    checked = skip,
-                    onCheckedChange = { skip = it; Store.setSkipDupes(ctx, it) },
-                    colors = switchColors(),
-                )
-            }
-            HorizontalDivider(color = C.Border)
-            SettingRow("سجل الأغاني المنزّلة", "مسحه بيخلّي التطبيق يعيد تنزيل أي أغنية") {
+            SettingRow("سجل التنزيلات السابقة", "بيستعمله التطبيق ليحذّرك لو نزّلت المقطع قبل") {
                 TextButton(onClick = { confirmClear = true }) { Text("مسح", color = C.Red) }
             }
         }
@@ -493,7 +531,11 @@ private fun SettingsScreen() {
             }
             SettingRow("Amrtune", "النسخة $version") {}
             HorizontalDivider(color = C.Border)
-            SettingRow("مكان الحفظ", "الموسيقى ← SongsDownloader") {}
+            SettingRow("مكان الحفظ", "الصوت: الموسيقى ← SongsDownloader\nالفيديو: الأفلام ← SongsDownloader") {}
+            HorizontalDivider(color = C.Border)
+            SettingRow("حول والتراخيص", "الترخيص والمكتبات المستعملة") {
+                TextButton(onClick = { showAbout = true }) { Text("عرض", color = C.Teal) }
+            }
         }
     }
 
@@ -503,8 +545,8 @@ private fun SettingsScreen() {
             containerColor = C.Card,
             titleContentColor = C.Text,
             textContentColor = C.Muted,
-            title = { Text("مسح سجل الأغاني؟") },
-            text = { Text("بعدها التطبيق ما رح يتعرّف على الأغاني اللي نزّلتها قبل. ما بينحذف أي ملف من جهازك.") },
+            title = { Text("مسح سجل التنزيلات؟") },
+            text = { Text("بعدها التطبيق ما رح ينبّهك للمقاطع اللي نزّلتها قبل (إلا اللي بيلاقيها بمجلد التنزيلات). ما بينحذف أي ملف من جهازك.") },
             confirmButton = {
                 TextButton(onClick = { Store.clearDone(ctx); confirmClear = false }) { Text("مسح", color = C.Red) }
             },
@@ -668,4 +710,32 @@ private fun OptionRow(icon: ImageVector, title: String, sub: String, onClick: ()
         }
         Icon(AppIcons.Download, contentDescription = null, tint = C.Teal, modifier = Modifier.size(20.dp))
     }
+}
+
+
+@Composable
+private fun ConfirmDialog(c: Confirm) {
+    AlertDialog(
+        onDismissRequest = { UiState.confirm = null },
+        containerColor = C.Card,
+        titleContentColor = C.Text,
+        textContentColor = C.Muted,
+        title = { Text(c.title) },
+        text = { Text(c.message) },
+        confirmButton = {
+            Column(horizontalAlignment = Alignment.End) {
+                TextButton(onClick = { UiState.confirm = null; c.onPositive() }) {
+                    Text(c.positive, color = C.Teal, fontWeight = FontWeight.Bold)
+                }
+                val neutral = c.neutral
+                val onNeutral = c.onNeutral
+                if (neutral != null && onNeutral != null) {
+                    TextButton(onClick = { UiState.confirm = null; onNeutral() }) { Text(neutral, color = C.Teal) }
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = { UiState.confirm = null }) { Text("إلغاء", color = C.Muted) }
+        },
+    )
 }

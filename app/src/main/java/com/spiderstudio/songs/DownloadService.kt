@@ -45,7 +45,7 @@ class DownloadService : Service() {
         )
         return Notification.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle("تنزيل الأغاني")
+            .setContentTitle("Amrtune")
             .setContentText(text)
             .setProgress(100, pct, false)
             .setOngoing(true)

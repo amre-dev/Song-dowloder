@@ -204,7 +204,7 @@ fun SearchScreen(
                         item {
                             Column(Modifier.fillMaxWidth().padding(vertical = 48.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Icon(Icons.Default.Search, contentDescription = null, tint = C.Muted, modifier = Modifier.size(44.dp))
-                                Text("ابحث عن أي أغنية أو فيديو", color = C.Text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                                Text("ابحث بيوتيوب عن أي شي", color = C.Text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                                 Text("اضغط النتيجة لاختيار الصيغة، أو زر التنزيل للتنزيل السريع", color = C.Muted, fontSize = 12.sp)
                             }
                         }
@@ -245,7 +245,7 @@ private fun ResultRow(hit: Engine.SearchHit, onOpen: (Engine.SearchHit) -> Unit)
             if (hit.isPlaylist) {
                 Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(Icons.Default.List, contentDescription = null, tint = C.Teal, modifier = Modifier.size(26.dp))
-                    if (hit.count > 0) Text("${hit.count} أغنية", color = C.Muted, fontSize = 11.sp)
+                    if (hit.count > 0) Text("${hit.count} مقطع", color = C.Muted, fontSize = 11.sp)
                 }
             } else if (b != null) {
                 Image(bitmap = b, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())

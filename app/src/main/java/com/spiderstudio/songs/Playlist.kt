@@ -107,7 +107,7 @@ fun PlaylistSheet(onPick: (String) -> Unit) {
                             Text(d.title.ifEmpty { "قائمة تشغيل" }, color = C.Text, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             val meta = listOfNotNull(
                                 d.owner.ifEmpty { null },
-                                "${d.items.size} أغنية" + if (d.total > d.items.size) " من ${d.total}" else "",
+                                "${d.items.size} مقطع" + if (d.total > d.items.size) " من ${d.total}" else "",
                             ).joinToString(" • ")
                             Text(meta, color = C.Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }

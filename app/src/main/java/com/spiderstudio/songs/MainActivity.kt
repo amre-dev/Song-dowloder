@@ -100,7 +100,7 @@ class MainActivity : ComponentActivity() {
         UiState.sheetOpen = true
         Thread {
             try {
-                val a = Engine.analyze(url)
+                val a = Engine.analyze(this, url)
                 runOnUiThread { if (seq == analyzeSeq && UiState.sheetOpen) UiState.analysis = a }
             } catch (e: Throwable) {
                 Log.e("Amrtune", "analyze failed", e)
@@ -181,15 +181,30 @@ class MainActivity : ComponentActivity() {
         }.start()
     }
 
-    /** اختيار صيغة من الورقة: يضيف المهمة بالصيغة المطلوبة. */
+    /** اختيار صيغة من الورقة: لو نزّله المستخدم قبل (بنفس النوع) بنطلب تأكيد. */
     private fun pickFormat(fmt: String) {
         val a = UiState.analysis ?: return
-        requestNotificationPermissionIfNeeded()
-        Queue.add(this, listOf(Engine.Item(a.url, a.title)), fmt)
-        UiState.sheetOpen = false
-        UiState.url = ""
-        UiState.status = ""
-        Toast.makeText(this, "أُضيفت للتنزيلات", Toast.LENGTH_SHORT).show()
+        val video = fmt.startsWith("mp4")
+        val prior = if (video) a.priorVideo else a.priorAudio
+        val go = {
+            requestNotificationPermissionIfNeeded()
+            Queue.add(this, listOf(Engine.Item(a.url, a.title)), fmt)
+            UiState.sheetOpen = false
+            UiState.url = ""
+            UiState.status = ""
+            Toast.makeText(this, "أُضيف للتنزيلات", Toast.LENGTH_SHORT).show()
+        }
+        if (prior == null) {
+            go()
+        } else {
+            UiState.confirm = Confirm(
+                title = "موجود عندك مسبقاً",
+                message = if (video) "هذا المقطع منزّل عندك قبل كفيديو ($prior). تنزّله مرة ثانية؟"
+                else "هذا المقطع منزّل عندك قبل بصيغة صوتية ($prior). تنزّله مرة ثانية؟",
+                positive = "نزّل مرة ثانية",
+                onPositive = go,
+            )
+        }
     }
 
     private fun changeFilter(f: String) {
@@ -215,7 +230,7 @@ class MainActivity : ComponentActivity() {
                     if (seq == playlistSeq && UiState.playlistOpen) {
                         UiState.playlist = d
                         UiState.selected.clear()
-                        UiState.selected.addAll(d.items.map { it.url })   // كل الأغاني محددة افتراضياً
+                        UiState.selected.addAll(d.items.map { it.url })   // كل المقاطع محددة افتراضياً
                     }
                 }
             } catch (e: Throwable) {
@@ -225,18 +240,48 @@ class MainActivity : ComponentActivity() {
         }.start()
     }
 
-    /** تنزيل الأغاني المحددة من القائمة بالصيغة المختارة. */
+    /** تنزيل المقاطع المحددة من القائمة بالصيغة المختارة، مع تنبيه لو بعضها منزّل قبل. */
     private fun pickPlaylist(fmt: String) {
         val d = UiState.playlist ?: return
         val chosen = d.items.filter { it.url in UiState.selected }
         if (chosen.isEmpty()) return
+        val video = fmt.startsWith("mp4")
+        Thread {
+            val keys = Store.doneKeys(this)
+            val audioNames = Engine.libraryNames(this, false)
+            val videoNames = Engine.libraryNames(this, true)
+            val dupUrls = chosen.filter {
+                val info = Engine.dupInfo(keys, audioNames, videoNames, it.url, it.title)
+                (if (video) info.video else info.audio) != null
+            }.map { it.url }.toHashSet()
+            runOnUiThread {
+                if (dupUrls.isEmpty()) {
+                    addPlaylistItems(chosen, fmt)
+                } else {
+                    val fresh = chosen.filter { it.url !in dupUrls }
+                    val onNew: (() -> Unit)? = if (fresh.isNotEmpty()) ({ addPlaylistItems(fresh, fmt) }) else null
+                    UiState.confirm = Confirm(
+                        title = "بعض المقاطع موجودة مسبقاً",
+                        message = "${dupUrls.size} من ${chosen.size} مقطع منزّلة عندك قبل " +
+                            (if (video) "كفيديو." else "بصيغة صوتية (m4a أو mp3)."),
+                        positive = "تنزيل الكل (${chosen.size})",
+                        onPositive = { addPlaylistItems(chosen, fmt) },
+                        neutral = if (fresh.isNotEmpty()) "تنزيل الجديدة فقط (${fresh.size})" else null,
+                        onNeutral = onNew,
+                    )
+                }
+            }
+        }.start()
+    }
+
+    private fun addPlaylistItems(items: List<Engine.SearchHit>, fmt: String) {
         requestNotificationPermissionIfNeeded()
-        Queue.add(this, chosen.map { Engine.Item(it.url, it.title) }, fmt)
+        Queue.add(this, items.map { Engine.Item(it.url, it.title) }, fmt)
         Store.setLastFmt(this, fmt)
         UiState.playlistOpen = false
         UiState.url = ""
         UiState.status = ""
-        Toast.makeText(this, "أُضيفت ${chosen.size} أغنية للتنزيلات", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "أُضيف ${items.size} مقطع للتنزيلات", Toast.LENGTH_SHORT).show()
     }
 
     private fun requestNotificationPermissionIfNeeded() {

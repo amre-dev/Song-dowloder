@@ -260,7 +260,47 @@ object Engine {
         val cover: ByteArray?,
         val audioSize: Long,
         val videos: List<VideoOpt>,
+        val priorAudio: String?,     // لو نزّله المستخدم قبل بصيغة صوتية (m4a / mp3 / ملف صوتي)
+        val priorVideo: String?,     // لو نزّله قبل كفيديو (MP4 720p / ملف فيديو)
     )
+
+    class Dups(val audio: String?, val video: String?)
+
+    /** أسماء ملفات مكتبة التنزيلات (بدون امتداد ولا لاحقة " (1)") بحروف صغيرة. */
+    fun libraryNames(ctx: Context, video: Boolean): Set<String> {
+        val names = HashSet<String>()
+        val uri = if (video) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+        val folder = if (video) "Movies/SongsDownloader/%" else "Music/SongsDownloader/%"
+        try {
+            ctx.contentResolver.query(
+                uri, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME),
+                "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?", arrayOf(folder), null,
+            )?.use { c ->
+                while (c.moveToNext()) {
+                    val n = c.getString(0) ?: continue
+                    names.add(n.substringBeforeLast('.').replace(Regex(" \\(\\d+\\)$"), "").lowercase())
+                }
+            }
+        } catch (e: Exception) {
+            // بدون صلاحية أو خطأ: نعتمد على السجل فقط
+        }
+        return names
+    }
+
+    /** هل نزّل المستخدم هذا المقطع من قبل؟ (من السجل، وباسم الملف لتغطية التنزيلات القديمة). */
+    fun dupInfo(keys: Set<String>, audioNames: Set<String>, videoNames: Set<String>, url: String, title: String): Dups {
+        val id = videoId(url)
+        val base = safeName(title).lowercase()
+        val audio = when {
+            id in keys -> "m4a"
+            "$id:mp3" in keys -> "mp3"
+            base in audioNames -> "ملف صوتي"
+            else -> null
+        }
+        val video = keys.firstOrNull { it.startsWith("$id:mp4") }?.let { "MP4 ${it.substringAfterLast(':')}p" }
+            ?: if (base in videoNames) "ملف فيديو" else null
+        return Dups(audio, video)
+    }
 
     /** ستريمات فيديو mp4 بترميز H.264 فقط (الوحيد اللي بيقدر MediaMuxer يدمجه بموثوقية). */
     private fun videoCandidates(info: StreamInfo): List<VideoStream> =
@@ -297,7 +337,7 @@ object Engine {
     }
 
     /** يحلّل رابط فيديو: العنوان والغلاف والصيغ المتاحة مع أحجامها (للورقة السفلية). خارج الـ main thread. */
-    fun analyze(url: String): Analysis {
+    fun analyze(ctx: Context, url: String): Analysis {
         init()
         val info = StreamInfo.getInfo(ServiceList.YouTube, url)
         val artist = (info.uploaderName ?: "").removeSuffix(" - Topic")
@@ -309,7 +349,8 @@ object Engine {
             val total = if (s > 0 && v.isVideoOnly && audioSize > 0) s + audioSize else s
             VideoOpt(v.height, v.fps, total, !v.isVideoOnly)
         }
-        return Analysis(url, info.name, artist, info.duration, cover, audioSize, videos)
+        val d = dupInfo(Store.doneKeys(ctx), libraryNames(ctx, false), libraryNames(ctx, true), url, info.name)
+        return Analysis(url, info.name, artist, info.duration, cover, audioSize, videos, d.audio, d.video)
     }
 
     private fun downloadVideo(

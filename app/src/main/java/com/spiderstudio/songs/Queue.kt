@@ -1,7 +1,14 @@
 package com.spiderstudio.songs
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import androidx.compose.runtime.getValue
@@ -49,6 +56,11 @@ object Queue {
     private var nextId = 1
     private var nextBatch = 1
     private var pool: ExecutorService? = null
+
+    // عدّادات لإشعار الاكتمال (بيطلع مرة وحدة لما تفضى القائمة)
+    private var doneSince = 0
+    private var failedSince = 0
+    private var lastDone: Task? = null
     private var poolSize = 0
 
     private fun active(): Int = tasks.count { it.state == S.WAITING || it.state == S.RUNNING }
@@ -149,17 +161,11 @@ object Queue {
         appCtx = app
         val p = pool(app)
         val quality = Store.quality(app)
-        val skip = Store.skipDupes(app)
         val batch = nextBatch++
         val fresh = ArrayList<Task>()
         for (it in items) {
             val t = Task(nextId++, it.url, it.title ?: it.url, quality, batch, fmt)
-            if (skip && Store.isDone(app, Engine.archiveKey(it.url, fmt))) {
-                t.state = S.SKIPPED
-                t.error = "نُزّلت سابقاً"
-            } else {
-                fresh.add(t)
-            }
+            fresh.add(t)       // التحقق من المنزّل سابقاً بيصير قبل الإضافة (مع تأكيد المستخدم)
             tasks.add(t)
         }
         if (fresh.isNotEmpty()) {
@@ -191,6 +197,38 @@ object Queue {
             submit(p, app, t)
             changed()
         }
+    }
+
+    /** إلغاء كل المهام الجارية والمنتظرة. */
+    fun cancelAll() {
+        var any = false
+        for (t in tasks.toList()) {
+            if (t.state == S.WAITING || t.state == S.RUNNING) {
+                t.gen++
+                t.state = S.CANCELED
+                any = true
+            }
+        }
+        if (any) changed()
+    }
+
+    /** إعادة محاولة كل المهام الفاشلة دفعة وحدة. */
+    fun retryFailed(ctx: Context) {
+        val list = tasks.filter { it.state == S.FAILED }
+        if (list.isEmpty()) return
+        val app = ctx.applicationContext
+        appCtx = app
+        val p = pool(app)
+        for (t in list) {
+            t.gen++
+            t.state = S.WAITING
+            t.progress = 0
+            t.error = null
+            t.note = ""
+        }
+        startService(app)
+        for (t in list) submit(p, app, t)
+        changed()
     }
 
     /** إزالة مهمة منتهية من القائمة (ما بتحذف الملف من الجهاز). */
@@ -239,12 +277,37 @@ object Queue {
         }
     }
 
+    /** true لو الشبكة الحالية مسموحة (كل الشبكات، أو غير محدودة فقط لو "واي فاي فقط" مفعّل). */
+    private fun networkAllowed(app: Context): Boolean {
+        if (!Store.wifiOnly(app)) return true
+        val cm = app.getSystemService(ConnectivityManager::class.java) ?: return true
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork)
+        return caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+    }
+
+    /** ينتظر لحد ما تتوفر شبكة مسموحة. false لو انلغت المهمة أثناء الانتظار. */
+    private fun waitForNetwork(app: Context, t: Task, g: Int): Boolean {
+        var shown = false
+        while (!networkAllowed(app)) {
+            if (t.gen != g) return false
+            if (!shown) {
+                shown = true
+                post(t, g, false) { note = "بانتظار الواي فاي…" }
+            }
+            try { Thread.sleep(3000) } catch (ie: InterruptedException) { return false }
+        }
+        if (shown) post(t, g, false) { note = "" }
+        return t.gen == g
+    }
+
     private fun run(app: Context, t: Task, g: Int) {
         if (t.gen != g) return
+        if (!waitForNetwork(app, t, g)) return
         post(t, g) { state = S.RUNNING; progress = 0 }
         var attempt = 0
         while (true) {
             try {
+                if (attempt > 0 && !waitForNetwork(app, t, g)) return
                 val r = Engine.download(
                     app, t.url, t.fmt, t.quality,
                     onTitle = { n -> post(t, g) { title = n } },
@@ -259,6 +322,8 @@ object Queue {
                     note = r.note
                     size = r.bytes
                     uri = r.uri.toString()
+                    doneSince++
+                    lastDone = this
                 }
                 return
             } catch (e: Engine.Canceled) {
@@ -269,7 +334,7 @@ object Queue {
                     try { Thread.sleep(2000L * attempt) } catch (ie: InterruptedException) { return }
                     continue
                 }
-                post(t, g) { state = S.FAILED; error = Engine.explain(e) }
+                post(t, g) { state = S.FAILED; error = Engine.explain(e); failedSince++ }
                 return
             }
         }
@@ -280,10 +345,68 @@ object Queue {
         val act = tasks.filter { it.state == S.WAITING || it.state == S.RUNNING }
         if (act.isEmpty()) {
             appCtx?.let { it.stopService(Intent(it, DownloadService::class.java)) }
+            if (doneSince + failedSince > 0) {
+                appCtx?.let { notifyFinished(it) }
+                doneSince = 0
+                failedSince = 0
+                lastDone = null
+            }
         } else {
             val pct = act.sumOf { it.progress } / act.size
             val running = act.firstOrNull { it.state == S.RUNNING }
             notifier?.invoke(pct, "المتبقي ${act.size}" + (running?.let { " • ${it.title}" } ?: ""))
+        }
+    }
+
+    /** إشعار واحد لما تخلص كل التنزيلات: لو مقطع واحد بيفتحه بالضغط، وإلا بيفتح التطبيق. */
+    private fun notifyFinished(app: Context) {
+        try {
+            val nm = app.getSystemService(NotificationManager::class.java) ?: return
+            nm.createNotificationChannel(
+                NotificationChannel("done", "اكتمال التنزيل", NotificationManager.IMPORTANCE_DEFAULT)
+            )
+            val done = doneSince
+            val failed = failedSince
+            val last = lastDone
+            val lastUri = last?.uri
+            val flags = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+
+            val title: String
+            val text: String
+            val pi: PendingIntent
+            if (done == 1 && failed == 0 && last != null && lastUri != null) {
+                title = "اكتمل التنزيل"
+                text = last.title
+                val mime = when {
+                    last.fmt.startsWith("mp4") -> "video/mp4"
+                    last.fmt == "mp3" -> "audio/mpeg"
+                    else -> "audio/mp4"
+                }
+                val view = Intent(Intent.ACTION_VIEW)
+                    .setDataAndType(Uri.parse(lastUri), mime)
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                pi = PendingIntent.getActivity(app, 2, view, flags)
+            } else {
+                title = when {
+                    done == 0 -> "فشل التنزيل"
+                    failed == 0 -> "اكتمل تنزيل $done مقطع"
+                    else -> "اكتمل $done وفشل $failed"
+                }
+                text = if (done == 0) "$failed مقطع" else "اضغط لفتح التطبيق"
+                pi = PendingIntent.getActivity(app, 3, Intent(app, MainActivity::class.java), flags)
+            }
+            nm.notify(
+                2,
+                Notification.Builder(app, "done")
+                    .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                    .setContentTitle(title)
+                    .setContentText(text)
+                    .setContentIntent(pi)
+                    .setAutoCancel(true)
+                    .build()
+            )
+        } catch (e: Exception) {
+            // الإشعار best-effort
         }
     }
 }

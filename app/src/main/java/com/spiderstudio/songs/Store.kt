@@ -2,7 +2,7 @@ package com.spiderstudio.songs
 
 import android.content.Context
 
-/** إعدادات بسيطة + سجل الأغاني المنزّلة (SharedPreferences). */
+/** إعدادات بسيطة + سجل التنزيلات السابقة (SharedPreferences). */
 object Store {
     private fun p(c: Context) = c.getSharedPreferences("songs", Context.MODE_PRIVATE)
 
@@ -42,8 +42,15 @@ object Store {
     fun lastFmt(c: Context): String = p(c).getString("last_fmt", "m4a") ?: "m4a"
     fun setLastFmt(c: Context, v: String) = p(c).edit().putString("last_fmt", v).apply()
 
+    /** تنزيل عبر شبكة غير محدودة الاستهلاك (واي فاي) فقط. */
+    fun wifiOnly(c: Context): Boolean = p(c).getBoolean("wifi_only", false)
+    fun setWifiOnly(c: Context, v: Boolean) = p(c).edit().putBoolean("wifi_only", v).apply()
+
     fun isDone(c: Context, id: String): Boolean =
         p(c).getStringSet("done", emptySet())?.contains(id) == true
+
+    /** كل مفاتيح السجل: "id" = صوت m4a، "id:mp3"، "id:mp4:<دقة>". */
+    fun doneKeys(c: Context): Set<String> = HashSet(p(c).getStringSet("done", emptySet()) ?: emptySet())
 
     fun clearDone(c: Context) = p(c).edit().remove("done").apply()
 

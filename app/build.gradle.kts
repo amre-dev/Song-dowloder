@@ -14,8 +14,8 @@ android {
         applicationId = "com.spiderstudio.songs"
         minSdk = 29
         targetSdk = 34
-        versionCode = 10
-        versionName = "0.8"
+        versionCode = 12
+        versionName = "1.0"
 
         // كود MP3 الأصلي (LAME): نكتفي بمعمارية الموبايلات الحديثة
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
